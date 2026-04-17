@@ -1,0 +1,519 @@
+Asset (Group) management interfaces:
+- ListAssetGroups: query the list of asset groups. 
+- ListAssets: query the list of assets. 
+- GetAsset: query asset information. 
+- GetAssetGroup: query asset group information. 
+- UpdateAssetGroup: update asset group information. 
+- UpdateAsset: update asset information. 
+ 
+Authentication method 
+To call the Assets API interface, you must use Access Key authentication. For details, refer to Obtain API access keys (AK/SK). 
+ 
+Rate limit requirement 
+- QPS rate limit: The maximum number of API query requests per second. Query requests exceeding this limit will return an error. 
+API
+Account-level QPS rate limits 
+CreateAssetGroup 
+30 
+CreateAsset 
+30 
+ListAssetGroups 
+30 
+ListAssets 
+30 
+GetAsset 
+100 
+GetAssetGroup 
+100 
+UpdateAsset 
+30 
+UpdateAssetGroup 
+30 
+CreateAssetGroup 
+POST /open/CreateAssetGroup 
+Create an Asset Group for asset management. 
+When creating an Asset Group for the first time, you must sign an authorization letter in the console. For details, refer to [⚠️Confidential][Customer name required in application form] Private digital asset library (for invited users only).
+Name string required
+The name of the Asset Group, with a maximum of 64 characters. 
+
+---
+Description string
+The description of the Asset Group, with a maximum of 300 characters. 
+
+---
+GroupType string
+The type of the Asset Group. Optional values: 
+- AIGC: Digital characters. 
+Currently, only AIGC is supported.
+
+---
+ProjectName string
+The name of the project to which the resource belongs. The default value is default. 
+If the resource is not in the default project, you must enter the correct project name. For more information about project, see the related IAM docs.
+
+---
+Response parameters 
+Id string
+The Id of the Asset Group. 
+
+---
+Response example: 
+{
+    "Id": "group-2026**********-*****"
+}
+CreateAsset 
+POST /open/CreateAsset 
+Create an Asset within the specified asset group. 
+ 
+Request parameters 
+GroupId string required
+The Id of the Asset Group to which the asset belongs. 
+
+---
+URL string required
+The publicly accessible address of the asset being uploaded. 
+
+---
+Name string
+The name of the asset, up to 64 characters. 
+This field is used only for fuzzy search when calling the ListAssets API and is not included in model inference. For details on generating videos with assets, see Generate videos using portrait assets and FAQ 4.
+
+---
+AssetType string required
+Asset types support uploading images, audio, and video. Available values: 
+- Image
+- Video
+- Audio
+When uploading image, audio, or video assets, only URL upload is supported; base64 is not supported.
+Requirements for a single image file
+- Format: jpeg, png, webp, bmp, tiff, gif, heic/heif 
+- Aspect ratio (width/height): (0.4, 2.5) 
+- Width and height (px): (300, 6000) 
+- Each image file must be less than 30 MB. 
+Requirements for a single video
+- Format: mp4, mov 
+- Resolution: 480p, 720p 
+- Each video must be between 2 and 15 seconds long. 
+- Dimensions: 
+  - Aspect ratio (width/height): [0.4, 2.5] 
+  - Width and height (px): [300, 6000] 
+  - Total pixel count: [640×640=409600, 834×1112=927408], that is, the product of width and height must fall within the range [409600, 927408]. 
+- Size: each video must not exceed 50 MB 
+- Frame rate (FPS): [24, 60] 
+Requirements for a single audio
+- Format: wav, mp3 
+- Each audio must be between 2 and 15 seconds long. 
+- Size: each audio must not exceed 15 MB 
+
+
+---
+ProjectName string
+The name of the project to which the resource belongs. The default value is default. If the resource is not in the default project, you must enter the correct project name. For more information about project, see the related IAM docs. 
+The ProjectName  must be consistent with the Asset Group to be created. 
+
+Response parameters 
+Id string
+The Id of the asset (media asset). 
+ 
+Return example: 
+{
+    "Id": "Asset-2026**********-*****"
+}
+ 
+ListAssets 
+POST /open/ListAssets 
+Query the list of assets (media assets) that meet the filter criteria. 
+Request parameters 
+Filter object required
+Filter conditions for search. 
+
+---
+  Filter.GroupIds array
+  The Id of the Asset Group to which the asset belongs. 
+
+---
+  Filter.GroupType string required
+  The type of the asset group (media asset group). Optional values: 
+  - AIGC: Digital characters. 
+
+---
+  Filter.Statuses array
+  Task status. 
+  - Active: The asset has been processed and is available for use. 
+  - Processing: The asset is being pre-processed and is not available for use. 
+  - Failed: The asset processing failed. 
+
+---
+Filter.Name string
+The name of the asset, up to 64 characters. 
+
+---
+PageNumber int (i64) required
+The search page number, which can be used for list pagination, starting from 1. For example: "page_number": 1, which returns the search results for the first page. 
+
+---
+PageSize int (i64) required
+The number of search results per page, up to 100. 
+
+---
+SortBy string
+The field name used for sorting. The default value is createTime. The following types are supported: 
+- CreateTime: Sort by creation time. 
+- UpdateTime: Sort by updated time. 
+- GroupId: Sort by the Id of the asset group. 
+
+---
+SortOrder string
+Sort order. The default value is Desc. Optional values: 
+- Desc: Descending 
+- Asc: Ascending 
+
+---
+ProjectName string
+The name of the project to which the resource belongs. The default value is default. 
+If the resource is not in the default project, you must enter the correct project name.  
+
+---
+ 
+Response parameters 
+Items array[]
+An array of assets that meet the filter criteria. 
+
+---
+
+  Items.Id string
+  The Id of the asset. 
+
+---
+  Items.name string
+  The name of the asset, up to 64 characters. 
+
+---
+  Items.URL string
+  The publicly accessible address of the asset. 
+
+---
+  Items.GroupId string
+  The Id of the asset group to which the asset belongs. 
+
+---
+  Items.AssetType string
+  The type of the asset. 
+  - Image: The type of the asset is image. 
+
+---
+  Items.Status string
+  Task status. 
+  - Active: The asset has been processed and is available for use. 
+  - Processing: The asset  is being pre-processed and is not available for use. 
+  - Failed: The asset processing failed. 
+
+---
+  Items.Error object
+  Error information. 
+
+---
+    Items.Error.Code string
+    Error code. 
+
+---
+    Items.Error.Message string
+    Error message. 
+
+---
+  Items.ProjectName string
+  The name of the project to which the resource belongs.  
+
+---
+  Items.CreateTime string
+  Creation time. 
+
+---
+  Items.UpdateTime string
+  Updated time. 
+
+---
+TotalCount int (i64)
+Return the total count. 
+
+---
+PageNumber int (i64)
+Return the number of pages. 
+
+---
+PageSize int (i64)
+The number of search results per page, up to 100. 
+
+---
+ListAssetGroups 
+POST /open/ListAssetGroups 
+Query the list of asset groups that meet the filter conditions. 
+Request parameters 
+Filter object required
+Filter conditions for search. 
+
+---
+  Filter.name string
+  The name of the asset group, up to 64 characters. 
+
+---
+  Filter.GroupIds array
+  The Id of the asset group to which the asset belongs. 
+
+---
+  Filter.GroupType string required
+  The type of asset group. Optional values: 
+  - AIGC: Digital characters. 
+
+---
+PageNumber int (i64)
+Search page number, can be used for list pagination, starting from 1. For example: "page_number": 1, that is, return the search results of the first page. 
+
+---
+PageSize int (i64)
+The number of search results per page, up to 100. 
+
+---
+SortBy string
+The field name used for sorting, default value createTime. Supports the following types: 
+- CreateTime: sort by created time. 
+- UpdateTime: sort by updated time. 
+
+---
+SortOrder string
+Sort order, default value Desc. Optional values: 
+- Desc: descending 
+- Asc: ascending 
+
+---
+ProjectName string
+The name of the project to which the resource belongs, default value is default. 
+If the resource is not in the default project, you need to fill in the correct project name. 
+
+---
+Response parameters 
+TotalCount int (i64)
+Return the total count of asset groups. 
+
+---
+Items array[]
+  Array of asset groups that meet the filter conditions. 
+
+---
+  Items.Id string
+  The Id of the asset group. 
+
+---
+  Items.Name string
+  The name of the asset group, up to 64 characters. 
+
+---
+  Items.Title string
+  The title of the asset group. 
+About to be deprecated; please use the Name parameter directly. 
+
+---
+  Items.Description string
+  The description of the asset group, up to 300 characters. 
+
+---
+  Items.GroupType string
+  The type of the asset group. 
+  - AIGC: Digital characters. 
+
+---
+  Items.ProjectName string
+  The name of the project to which the resource belongs. 
+
+---
+  Items.CreateTime string
+  Created time. 
+
+---
+  Items.UpdateTime string
+  Updated time. 
+
+---
+PageNumber int (i64)
+Return the number of pages. 
+
+---
+PageSize int (i64)
+The number of search results per page, up to 100. 
+
+---
+ 
+GetAssetGroup 
+POST /open/GetAssetGroup 
+Get information about a single asset group. 
+Request parameters 
+ 
+Id string required
+The Id of the asset group. 
+
+---
+ProjectName string
+The name of the project to which the asset group to be queried belongs, default value is default. 
+If the resource is not in the default project, you need to fill in the correct project name. For more information about project, see the related IAM docs.
+
+---
+Response parameters 
+Id string
+The Id of the asset group. 
+
+---
+Name string
+The name of the asset group, up to 64 characters. 
+
+---
+Title string
+The title of the asset group. 
+About to be deprecated; please use the Name parameter directly. 
+
+---
+Description string
+The description of the asset group, up to 300 characters. 
+
+---
+GroupType string
+The type of the asset group. 
+- AIGC: virtual avatar 
+
+---
+ProjectName string
+The name of the project to which the resource belongs. 
+
+---
+CreateTime string
+Created time.  
+
+---
+UpdateTime string
+Updated time. 
+
+GetAsset 
+POST /open/GetAsset 
+Retrieve information for a single asset. 
+Request parameters 
+ 
+Id string required
+The Id of the asset. 
+
+---
+ProjectName string
+The name of the project to which the asset to be queried belongs. The default value is default. 
+If the resource is not in the default project, enter the correct project name.  For more information about project, see the related IAM docs.
+
+---
+ 
+Response parameters 
+Id string
+The Id of the asset. 
+
+---
+Name string
+The name of the asset, up to 64 characters. 
+
+---
+URL string
+The access URL of the asset. Valid for 12 hours. Please save promptly. 
+
+---
+AssetType string
+The type of the asset. 
+- Image: The type of the asset is image. 
+
+---
+GroupId string
+The Id of the asset group to which the asset belongs. 
+
+---
+Status string
+Task status. 
+- Active: The asset has been processed and is available for use. 
+- Processing: The asset is being pre-processed and cannot be used. 
+- Failed: The asset failed to process. 
+
+---
+Error object
+Error information. 
+
+---
+  Error.Code string
+  The error code. 
+
+---
+  Error.Message string
+  Error information. 
+
+---
+CreateTime string
+Created time. 
+
+---
+UpdateTime  string
+Updated time. 
+
+---
+ProjectName string
+The name of the project to which the resource belongs. 
+ 
+UpdateAssetGroup
+POST /open/UpdateAssetGroup 
+Update information for a single asset group. Currently, only the Name and Description of the asset group can be updated. 
+Request parameters 
+Id string  required 
+The Id of the asset group to be updated. 
+
+---
+Name string
+The new name of the asset group to be updated, up to 64 characters. 
+
+---
+Description string
+The new description of the asset group to be updated, up to 300 characters. 
+
+---
+ProjectName string
+The name of the project to which the asset group to be updated belongs. The default value is default. 
+If the resource is not in the default project, enter the correct project name. For more information about project, see the related IAM docs.
+ 
+Response parameters 
+
+Id string
+The Id of the asset group. 
+  
+ 
+UpdateAsset
+POST /open/UpdateAsset 
+Update information for a single asset. Currently, only updating the Name of the asset is supported. 
+Request parameters 
+Id string  required 
+The Id of the asset to be updated. 
+
+---
+Name string
+The new name of the asset to be updated, up to 64 characters. 
+
+---
+ProjectName string
+The name of the project to which the asset to be updated belongs. The default value is default. 
+If the resource is not in the default project, enter the correct project name.  
+
+---
+Response parameters 
+Id string
+The Id of the asset. 
+ 
+ 
+DeleteAsset
+POST /open/DeleteAsset
+Delete an asset.
+Request parameters 
+Id string required
+ID of the asset to delete.
+
+---
+ProjectName string
+The name of the project to which the asset group to be queried belongs, default value is default. 
+If the resource is not in the default project, you need to fill in the correct project name. For more information about project, see the related IAM docs.

@@ -1,0 +1,33 @@
+# 依赖（各子项目）
+node_modules/
+
+# 环境变量与密钥（仅保留示例文件）
+.env
+.env.*
+!.env.docker.example
+!**/.env.example
+
+# 证书与常见云凭证
+*.pem
+**/vertexai-*.json
+**/*-service-account*.json
+**/*credentials*.json
+
+# 构建与缓存
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+.vite/
+
+# 本地数据与日志（根目录挂载/输出，如 Docker）
+/data/
+
+# 本地账号备忘（勿提交）
+web/user.md
+*.log
+.DS_Store
+
+# Prisma 生成物（若存在本地生成）
+**/src/generated/prisma/

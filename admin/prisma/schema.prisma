@@ -1,0 +1,257 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ──────────────────────────────────────────────
+// Existing models (kept in sync with user-side)
+// ──────────────────────────────────────────────
+
+model User {
+  id           String          @id @default(uuid())
+  email        String          @unique
+  passwordHash String
+  name         String
+  status       UserStatus      @default(ACTIVE)
+  quota        Json?
+  remark       String?         @db.Text
+  projects     Project[]
+  apiConfigs   UserApiConfig[]
+  tokenUsages  TokenUsageLog[]
+  createdAt    DateTime        @default(now())
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+model Project {
+  id                String              @id @default(uuid())
+  userId            String
+  user              User                @relation(fields: [userId], references: [id])
+  name              String
+  script            String              @db.Text
+  fullScript        String              @db.Text
+  assetsJson        Json
+  assetDescriptions Json
+  style             String
+  ratio             String              @default("9:16")
+  resolution        String              @default("720p")
+  seedanceEndpoint  String              @default("")
+  globalSeed        Int                 @default(0)
+  creationMode      ProjectCreationMode @default(AUTO)
+  status            ProjectStatus       @default(DRAFT)
+  storyboards       Storyboard[]
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([userId])
+}
+
+enum ProjectCreationMode {
+  AUTO
+  MANUAL
+}
+
+enum ProjectStatus {
+  DRAFT
+  GENERATING_STORYBOARDS
+  REVIEW
+  GENERATING_VIDEOS
+  COMPLETED
+  FAILED
+}
+
+model Storyboard {
+  id                   String           @id @default(uuid())
+  projectId            String
+  project              Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  storyboardId         String
+  sortOrder            Int
+  duration             Int
+  prompt               String           @db.Text
+  assetBindings        Json
+  seedanceContentItems Json
+  status               StoryboardStatus @default(DRAFT)
+  tasks                GenerationTask[]
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  @@index([projectId])
+}
+
+enum StoryboardStatus {
+  DRAFT
+  APPROVED
+  SUBMITTED
+  GENERATING
+  SUCCEEDED
+  FAILED
+}
+
+model GenerationTask {
+  id               String         @id @default(uuid())
+  storyboardId     String
+  storyboard       Storyboard     @relation(fields: [storyboardId], references: [id], onDelete: Cascade)
+  arkTaskId        String         @unique
+  model            String
+  status           TaskStatus     @default(SUBMITTED)
+  arkStatus        String?
+  videoUrl         String?        @db.Text
+  localVideoPath   String?
+  gcsVideoPath     String?
+  seed             BigInt?
+  resolution       String?
+  ratio            String?
+  duration         Int?
+  completionTokens BigInt?
+  totalTokens      BigInt?
+  error            String?        @db.Text
+  apiConfigId      String?
+  apiConfig        UserApiConfig? @relation(fields: [apiConfigId], references: [id])
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([storyboardId])
+  @@index([status])
+  @@index([apiConfigId])
+}
+
+enum TaskStatus {
+  SUBMITTED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  PERSISTING
+  PERSISTED
+}
+
+// ──────────────────────────────────────────────
+// Admin-only models
+// ──────────────────────────────────────────────
+
+model AdminUser {
+  id           String    @id @default(uuid())
+  username     String    @unique
+  passwordHash String
+  displayName  String
+  role         AdminRole @default(OPERATOR)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  auditLogs    AuditLog[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  ADMIN
+  OPERATOR
+}
+
+model UserApiConfig {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id])
+  provider  String
+  name      String
+  endpoint  String
+  apiKey    String
+  model     String?
+  isDefault Boolean          @default(false)
+  isActive  Boolean          @default(true)
+  tasks     GenerationTask[]
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@index([userId])
+  @@index([userId, provider])
+}
+
+model GlobalConfig {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String   @db.Text
+  encrypted Boolean  @default(false)
+  remark    String?
+  updatedAt DateTime @updatedAt
+}
+
+model TokenUsageLog {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  projectId    String?
+  taskId       String?
+  provider     String
+  model        String
+  requestType  String
+  inputTokens  BigInt   @default(0)
+  outputTokens BigInt   @default(0)
+  totalTokens  BigInt   @default(0)
+  costEstimate Decimal? @db.Decimal(10, 6)
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, provider])
+  @@index([createdAt])
+  @@index([userId, createdAt])
+}
+
+model PromptTemplate {
+  id          String         @id @default(uuid())
+  name        String
+  slug        String         @unique
+  category    PromptCategory
+  description String?        @db.Text
+  content     String         @db.Text
+  version     Int            @default(1)
+  isActive    Boolean        @default(true)
+  versions    PromptVersion[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+enum PromptCategory {
+  SYSTEM_PROMPT
+  JSON_SCHEMA
+  USER_PROMPT
+}
+
+model PromptVersion {
+  id         String         @id @default(uuid())
+  templateId String
+  template   PromptTemplate @relation(fields: [templateId], references: [id])
+  version    Int
+  content    String         @db.Text
+  changeNote String?
+  createdBy  String?
+  createdAt  DateTime       @default(now())
+
+  @@index([templateId])
+  @@unique([templateId, version])
+}
+
+model AuditLog {
+  id         String    @id @default(uuid())
+  adminId    String
+  admin      AdminUser @relation(fields: [adminId], references: [id])
+  action     String
+  targetType String
+  targetId   String?
+  before     Json?
+  after      Json?
+  ip         String?
+  createdAt  DateTime  @default(now())
+
+  @@index([adminId])
+  @@index([action])
+  @@index([createdAt])
+}

@@ -1,0 +1,142 @@
+# Creator MMFC — 全套服务（PostgreSQL + 用户端 + Worker + 管理端 API + 管理端 Web）
+# 用法：在仓库根目录复制 .env.docker.example 为 .env 并填写后执行：
+#   docker compose up -d --build
+#
+# 内网访问：将 NEXTAUTH_URL / CORS_ORIGIN 等改为 http://<服务器局域网IP>:端口
+# 默认端口：用户端 3000，管理后台 8080（API 经 Nginx 同端口代理，无需单独暴露 3100）
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: seedance
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    # 不映射 5432 到宿主机，仅容器内网访问；若需本机工具连库，可取消下一行注释：
+    # ports:
+    #   - "5432:5432"
+
+  db-init:
+    build:
+      context: .
+      dockerfile: admin/server/Dockerfile
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres}@postgres:5432/seedance
+    working_dir: /app
+    command:
+      [
+        "sh",
+        "-c",
+        "npx prisma db push --schema=./prisma/schema.prisma && npx tsx prisma/seed.ts && npx tsx scripts/seed-prompts.ts",
+      ]
+
+  web-app:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    volumes:
+      # 宿主机目录：项目内 web/data/videos，便于本地直接查看/备份
+      - ./web/data/videos:/data/videos
+      # GCS 凭证：在根 .env 设置 GCS_CREDENTIALS_FILE=./web/your-key.json（不需要 GCS 可删此行与 GOOGLE_APPLICATION_CREDENTIALS）
+      - ${GCS_CREDENTIALS_FILE:-./web/vertexai-481302-d276c5053647.json}:/run/secrets/gcs-credentials.json:ro
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres}@postgres:5432/seedance
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-change-me-in-production}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      AUTH_TRUST_HOST: ${AUTH_TRUST_HOST:-true}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-pro-preview}
+      SEEDANCE_API_KEY: ${SEEDANCE_API_KEY:-}
+      SEEDANCE_ENDPOINT: ${SEEDANCE_ENDPOINT:-ep-20260328102217-9cg74}
+      SEEDANCE_MODEL: ${SEEDANCE_MODEL:-dreamina-seedance-2-0-260128}
+      GCS_BUCKET: ${GCS_BUCKET:-}
+      GCS_PROJECT_ID: ${GCS_PROJECT_ID:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      VIDEO_STORAGE_PATH: /data/videos
+
+  web-worker:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["npx", "tsx", "src/worker/index.ts"]
+    volumes:
+      - ./web/data/videos:/data/videos
+      - ${GCS_CREDENTIALS_FILE:-./web/vertexai-481302-d276c5053647.json}:/run/secrets/gcs-credentials.json:ro
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres}@postgres:5432/seedance
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      SEEDANCE_API_KEY: ${SEEDANCE_API_KEY:-}
+      SEEDANCE_MODEL: ${SEEDANCE_MODEL:-dreamina-seedance-2-0-260128}
+      GCS_BUCKET: ${GCS_BUCKET:-}
+      GCS_PROJECT_ID: ${GCS_PROJECT_ID:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      VIDEO_STORAGE_PATH: /data/videos
+      WORKER_POLL_INTERVAL: ${WORKER_POLL_INTERVAL:-15000}
+
+  admin-api:
+    build:
+      context: .
+      dockerfile: admin/server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres}@postgres:5432/seedance
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-change-me-in-production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+      PORT: "3100"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "fetch(\"http://127.0.0.1:3100/api/admin/health\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  admin-web:
+    build:
+      context: ./admin/web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_WEB_PORT:-8080}:8080"
+    depends_on:
+      admin-api:
+        condition: service_healthy
+
+volumes:
+  pgdata:

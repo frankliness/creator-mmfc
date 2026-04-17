@@ -1,0 +1,39 @@
+services:
+  admin-api:
+    build:
+      context: ..
+      dockerfile: admin/server/Dockerfile
+    ports:
+      - "3100:3100"
+    environment:
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/seedance"
+      ADMIN_JWT_SECRET: "${ADMIN_JWT_SECRET}"
+      ENCRYPTION_KEY: "${ENCRYPTION_KEY}"
+      CORS_ORIGIN: "http://localhost:8080"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  admin-web:
+    build:
+      context: web
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      - admin-api
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: seedance
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  pgdata:

@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: seedance
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - videos:/data/videos
+      - ./vertexai-481302-d276c5053647.json:/run/secrets/gcs-credentials.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres}@postgres:5432/seedance
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-change-me-in-production}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-pro-preview}
+      SEEDANCE_API_KEY: ${SEEDANCE_API_KEY}
+      SEEDANCE_ENDPOINT: ${SEEDANCE_ENDPOINT:-ep-20260328102217-9cg74}
+      SEEDANCE_MODEL: ${SEEDANCE_MODEL:-dreamina-seedance-2-0-260128}
+      GCS_BUCKET: ${GCS_BUCKET:-n8n-workflow-video}
+      GCS_PROJECT_ID: ${GCS_PROJECT_ID}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/run/secrets/gcs-credentials.json}
+      VIDEO_STORAGE_PATH: /data/videos
+
+  worker:
+    build: .
+    command: ["npx", "tsx", "src/worker/index.ts"]
+    volumes:
+      - videos:/data/videos
+      - ./vertexai-481302-d276c5053647.json:/run/secrets/gcs-credentials.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres}@postgres:5432/seedance
+      SEEDANCE_API_KEY: ${SEEDANCE_API_KEY}
+      SEEDANCE_MODEL: ${SEEDANCE_MODEL:-dreamina-seedance-2-0-260128}
+      GCS_BUCKET: ${GCS_BUCKET:-n8n-workflow-video}
+      GCS_PROJECT_ID: ${GCS_PROJECT_ID}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/run/secrets/gcs-credentials.json}
+      VIDEO_STORAGE_PATH: /data/videos
+      WORKER_POLL_INTERVAL: ${WORKER_POLL_INTERVAL:-15000}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+
+volumes:
+  pgdata:
+  videos:
