@@ -28,6 +28,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
+import {
+  DEFAULT_MANUAL_STORYBOARD_DURATION,
+  formatManualStoryboardDuration,
+  isValidManualStoryboardDuration,
+  MANUAL_STORYBOARD_DURATION_HINT,
+  MANUAL_STORYBOARD_DURATION_OPTIONS,
+} from "@/lib/storyboard-duration";
 import { toast } from "sonner";
 
 interface AssetBinding {
@@ -124,7 +131,9 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editPrompt, setEditPrompt] = useState("");
-  const [editDuration, setEditDuration] = useState("10");
+  const [editDuration, setEditDuration] = useState(
+    String(DEFAULT_MANUAL_STORYBOARD_DURATION)
+  );
   const [editAssetBindings, setEditAssetBindings] = useState<AssetBinding[]>([]);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState<string | null>(null);
@@ -183,6 +192,11 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
 
   async function saveEdit() {
     if (!editingId) return;
+    const duration = Number(editDuration);
+    if (!isValidManualStoryboardDuration(duration)) {
+      toast.error(MANUAL_STORYBOARD_DURATION_HINT);
+      return;
+    }
     setSaving(true);
 
     const normalizedBindings = editAssetBindings.map((a) => ({
@@ -203,7 +217,7 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         prompt: editPrompt,
-        duration: parseInt(editDuration),
+        duration,
         assetBindings: normalizedBindings,
         seedanceContentItems: normalizedItems,
       }),
@@ -402,7 +416,7 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
                   <TableCell className="font-mono text-sm">
                     {sb.storyboardId}
                   </TableCell>
-                  <TableCell>{sb.duration}s</TableCell>
+                  <TableCell>{formatManualStoryboardDuration(sb.duration)}</TableCell>
                   <TableCell>
                     <p className="line-clamp-3 max-w-md text-xs leading-relaxed">
                       {sb.prompt.slice(0, 200)}...
@@ -503,7 +517,7 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
                 </div>
                 <div>
                   <span className="text-muted-foreground">时长：</span>
-                  {detailSb.duration}s
+                  {formatManualStoryboardDuration(detailSb.duration)}
                 </div>
                 <div>
                   <span className="text-muted-foreground">状态：</span>
@@ -646,14 +660,17 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
           <div className="space-y-6">
             <div className="space-y-2">
               <label className="text-sm font-medium">时长（秒）</label>
+              <p className="text-xs text-muted-foreground">
+                {MANUAL_STORYBOARD_DURATION_HINT}
+              </p>
               <Select value={editDuration} onValueChange={(v) => v && setEditDuration(v)}>
                 <SelectTrigger className="w-32">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {[10, 11, 12, 13, 14, 15].map((d) => (
+                  {MANUAL_STORYBOARD_DURATION_OPTIONS.map((d) => (
                     <SelectItem key={d} value={String(d)}>
-                      {d}s
+                      {formatManualStoryboardDuration(d)}
                     </SelectItem>
                   ))}
                 </SelectContent>

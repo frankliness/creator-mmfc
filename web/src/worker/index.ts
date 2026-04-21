@@ -8,6 +8,7 @@ import {
 } from "./video-persist";
 import { logTokenUsage } from "../lib/token-logger";
 import { decrypt } from "../lib/crypto";
+import { logUserAction } from "../lib/user-action-logger";
 
 const prisma = new PrismaClient();
 
@@ -70,6 +71,22 @@ async function pollTasks() {
           },
         });
 
+        await logUserAction({
+          userId: task.storyboard.project.userId,
+          category: "task",
+          action: "task.succeeded",
+          targetType: "GenerationTask",
+          targetId: task.id,
+          projectId: task.storyboard.project.id,
+          storyboardId: task.storyboardId,
+          taskId: task.id,
+          metadata: {
+            arkTaskId: task.arkTaskId,
+            model: task.model,
+            totalTokens: String(result.usage?.total_tokens || 0),
+          },
+        });
+
         if (result.usage) {
           await logTokenUsage({
             userId: task.storyboard.project.userId,
@@ -110,6 +127,21 @@ async function pollTasks() {
           },
         });
 
+        await logUserAction({
+          userId: task.storyboard.project.userId,
+          category: "task",
+          action: "task.failed",
+          targetType: "GenerationTask",
+          targetId: task.id,
+          projectId: task.storyboard.project.id,
+          storyboardId: task.storyboardId,
+          taskId: task.id,
+          metadata: {
+            arkTaskId: task.arkTaskId,
+            error: errorMsg,
+          },
+        });
+
         await prisma.storyboard.update({
           where: { id: task.storyboardId },
           data: { status: "FAILED" },
@@ -119,6 +151,21 @@ async function pollTasks() {
           await prisma.generationTask.update({
             where: { id: task.id },
             data: { status: "RUNNING", arkStatus: result.status },
+          });
+
+          await logUserAction({
+            userId: task.storyboard.project.userId,
+            category: "task",
+            action: "task.running",
+            targetType: "GenerationTask",
+            targetId: task.id,
+            projectId: task.storyboard.project.id,
+            storyboardId: task.storyboardId,
+            taskId: task.id,
+            metadata: {
+              arkTaskId: task.arkTaskId,
+              arkStatus: result.status,
+            },
           });
 
           await prisma.storyboard.update({
@@ -143,9 +190,41 @@ async function persistVideo(
   videoUrl: string
 ) {
   try {
+    const task = await prisma.generationTask.findUnique({
+      where: { id: taskId },
+      select: {
+        storyboardId: true,
+        storyboard: {
+          select: {
+            project: {
+              select: {
+                id: true,
+                userId: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!task) return;
+
     await prisma.generationTask.update({
       where: { id: taskId },
       data: { status: "PERSISTING" },
+    });
+
+    await logUserAction({
+      userId: task.storyboard.project.userId,
+      category: "task",
+      action: "task.persisting",
+      targetType: "GenerationTask",
+      targetId: taskId,
+      projectId: task.storyboard.project.id,
+      storyboardId: task.storyboardId,
+      taskId,
+      metadata: {
+        arkTaskId,
+      },
     });
 
     const videoBasename = buildVideoBasename(storyboardIdLabel, arkTaskId);
@@ -173,6 +252,22 @@ async function persistVideo(
         localVideoPath: localPath,
         gcsVideoPath: gcsPath,
         error: null,
+      },
+    });
+
+    await logUserAction({
+      userId: task.storyboard.project.userId,
+      category: "task",
+      action: "task.persisted",
+      targetType: "GenerationTask",
+      targetId: taskId,
+      projectId: task.storyboard.project.id,
+      storyboardId: task.storyboardId,
+      taskId,
+      metadata: {
+        arkTaskId,
+        localPath,
+        gcsPath,
       },
     });
 
@@ -217,6 +312,17 @@ async function checkProjectCompletion() {
         await prisma.project.update({
           where: { id: project.id },
           data: { status: hasFailure ? "FAILED" : "COMPLETED" },
+        });
+        await logUserAction({
+          userId: project.userId,
+          category: "project",
+          action: hasFailure ? "project.completed_with_failure" : "project.completed",
+          targetType: "Project",
+          targetId: project.id,
+          projectId: project.id,
+          metadata: {
+            status: hasFailure ? "FAILED" : "COMPLETED",
+          },
         });
         console.log(
           `[worker] project ${project.id} marked ${hasFailure ? "FAILED" : "COMPLETED"}`

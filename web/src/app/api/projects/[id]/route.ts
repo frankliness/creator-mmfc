@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { logUserAction } from "@/lib/user-action-logger";
 import { z } from "zod";
 
 const patchSchema = z.object({
@@ -90,6 +91,19 @@ export async function PATCH(
   const updated = await prisma.project.update({
     where: { id },
     data: patch,
+  });
+
+  await logUserAction({
+    userId: session.user.id,
+    category: "project",
+    action: "project.update",
+    targetType: "Project",
+    targetId: id,
+    projectId: id,
+    route: `/api/projects/${id}`,
+    metadata: {
+      patch,
+    },
   });
 
   return NextResponse.json(updated);

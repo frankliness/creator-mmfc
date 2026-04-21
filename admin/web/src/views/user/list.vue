@@ -41,6 +41,7 @@ const columns = [
   { title: "名称", dataIndex: "name", key: "name" },
   { title: "状态", key: "status" },
   { title: "项目数", dataIndex: ["_count", "projects"], key: "projects" },
+  { title: "画布项目", dataIndex: ["_count", "canvasProjects"], key: "canvasProjects" },
   { title: "注册时间", dataIndex: "createdAt", key: "createdAt", customRender: ({ text }: any) => new Date(text).toLocaleDateString() },
   { title: "操作", key: "action", width: 100 },
 ];

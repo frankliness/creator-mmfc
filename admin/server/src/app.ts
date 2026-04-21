@@ -12,6 +12,8 @@ import { tokenUsageRoutes } from "./modules/token-usage/token-usage.routes.js";
 import { dashboardRoutes } from "./modules/dashboard/dashboard.routes.js";
 import { auditLogRoutes } from "./modules/audit-log/audit-log.routes.js";
 import { adminMgmtRoutes } from "./modules/admin-mgmt/admin-mgmt.routes.js";
+import { canvasProjectRoutes } from "./modules/canvas-projects/canvas-projects.routes.js";
+import { userActionLogRoutes } from "./modules/user-action-log/user-action-log.routes.js";
 
 function parseCorsOrigins(): string | string[] {
   const raw = process.env.CORS_ORIGIN || "http://localhost:8080";
@@ -44,7 +46,9 @@ export async function buildApp() {
   await app.register(tokenUsageRoutes, { prefix: "/api/admin/token-usage" });
   await app.register(dashboardRoutes, { prefix: "/api/admin/dashboard" });
   await app.register(auditLogRoutes, { prefix: "/api/admin/audit-logs" });
+  await app.register(userActionLogRoutes, { prefix: "/api/admin/user-action-logs" });
   await app.register(adminMgmtRoutes, { prefix: "/api/admin/admins" });
+  await app.register(canvasProjectRoutes, { prefix: "/api/admin/canvas-projects" });
 
   app.get("/api/admin/health", async () => ({ status: "ok" }));
 

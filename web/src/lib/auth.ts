@@ -2,6 +2,7 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { prisma } from "./prisma";
+import { logUserAction } from "./user-action-logger";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
@@ -26,6 +27,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           user.passwordHash
         );
         if (!valid) return null;
+
+        await logUserAction({
+          userId: user.id,
+          category: "auth",
+          action: "auth.login",
+          targetType: "User",
+          targetId: user.id,
+          route: "/api/auth/[...nextauth]",
+          metadata: {
+            email: user.email,
+          },
+        });
 
         return { id: user.id, email: user.email, name: user.name };
       },

@@ -20,7 +20,7 @@
             {
               "id": "b38ed167-82b2-4bc1-9550-855f2e932219",
               "name": "",
-              "value": "=ep-20260328102435-jwjrx  Dreamina-Seedance-2.0-fast\nep-20260328102217-9cg74  Dreamina-Seedance-2.0",
+              "value": "=ep-your-endpoint-fast  Dreamina-Seedance-2.0-fast\nep-your-endpoint  Dreamina-Seedance-2.0",
               "type": "string"
             },
             {
@@ -445,7 +445,7 @@
             {
               "id": "535c1986-13ed-4d4d-a8a8-861efc56298b",
               "name": "sd-endpoint",
-              "value": "ep-20260328102217-9cg74",
+              "value": "ep-your-endpoint",
               "type": "string"
             }
           ]
@@ -577,7 +577,7 @@
       "parameters": {
         "projectId": {
           "__rl": true,
-          "value": "vertexai-481302",
+          "value": "your-gcp-project-id",
           "mode": "list",
           "cachedResultName": "VertexAI"
         },
@@ -596,7 +596,7 @@
       "credentials": {
         "googleApi": {
           "id": "T29ZE4BaJGRcduEP",
-          "name": "vertexai-481302"
+          "name": "your-gcp-credentials"
         }
       }
     },

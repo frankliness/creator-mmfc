@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { isValidManualStoryboardDuration } from "@/lib/storyboard-duration";
+import { logUserAction } from "@/lib/user-action-logger";
 import { z } from "zod";
 
 const updateSchema = z.object({
   prompt: z.string().optional(),
-  duration: z.number().int().min(10).max(15).optional(),
+  duration: z
+    .number()
+    .refine(isValidManualStoryboardDuration, "时长仅支持整数秒：4-15 或 -1")
+    .optional(),
   assetBindings: z.any().optional(),
   seedanceContentItems: z.any().optional(),
 });
@@ -48,5 +53,20 @@ export async function PATCH(
     data.seedanceContentItems = parsed.data.seedanceContentItems;
 
   const updated = await prisma.storyboard.update({ where: { id }, data });
+
+  await logUserAction({
+    userId: session.user.id,
+    category: "storyboard",
+    action: "storyboard.update",
+    targetType: "Storyboard",
+    targetId: id,
+    projectId: storyboard.projectId,
+    storyboardId: id,
+    route: `/api/storyboards/${id}`,
+    metadata: {
+      patch: data,
+    },
+  });
+
   return NextResponse.json(updated);
 }

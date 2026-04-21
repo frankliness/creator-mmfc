@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { logUserAction } from "@/lib/user-action-logger";
 
 export async function POST(
   _req: NextRequest,
@@ -63,6 +64,22 @@ export async function POST(
   console.log(
     `[clone] ${source.storyboardId} -> ${newStoryboardId} (project=${source.projectId})`
   );
+
+  await logUserAction({
+    userId: session.user.id,
+    category: "storyboard",
+    action: "storyboard.clone",
+    targetType: "Storyboard",
+    targetId: cloned.id,
+    projectId: source.projectId,
+    storyboardId: cloned.id,
+    route: `/api/storyboards/${id}/clone`,
+    metadata: {
+      sourceStoryboardId: source.id,
+      sourceStoryboardCode: source.storyboardId,
+      newStoryboardCode: cloned.storyboardId,
+    },
+  });
 
   return NextResponse.json(cloned, { status: 201 });
 }

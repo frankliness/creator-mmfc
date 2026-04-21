@@ -61,7 +61,30 @@
       </a-tab-pane>
 
       <a-tab-pane key="token" tab="Token 消耗">
-        <p>Token 总消耗: {{ user.totalTokens }}</p>
+        <a-descriptions bordered :column="1" size="small" style="max-width: 520px">
+          <a-descriptions-item label="全站 TokenUsageLog 合计">{{ user.totalTokens }}</a-descriptions-item>
+          <a-descriptions-item label="画布 CanvasAiCall Token 合计">{{ user.canvasTokenTotal ?? "0" }}</a-descriptions-item>
+          <a-descriptions-item label="画布 AI 调用次数">{{ user.canvasCallCount ?? 0 }}</a-descriptions-item>
+          <a-descriptions-item label="画布项目数">{{ user._count?.canvasProjects ?? 0 }}</a-descriptions-item>
+        </a-descriptions>
+      </a-tab-pane>
+
+      <a-tab-pane key="canvas-quota" tab="AI 画布配额">
+        <p style="color: #666; margin-bottom: 12px">
+          对应用户端校验字段：<code>quota.daily_image_limit</code>（每日生图次数上限）、
+          <code>quota.daily_chat_tokens</code>（每日聊天 totalTokens 上限）。留空表示不限制。
+        </p>
+        <a-form layout="vertical" style="max-width: 400px">
+          <a-form-item label="每日生图次数上限">
+            <a-input-number v-model:value="canvasQuotaForm.daily_image_limit" :min="0" style="width: 100%" placeholder="不限制请留空" />
+          </a-form-item>
+          <a-form-item label="每日聊天 Token 上限">
+            <a-input-number v-model:value="canvasQuotaForm.daily_chat_tokens" :min="0" style="width: 100%" placeholder="不限制请留空" />
+          </a-form-item>
+          <a-form-item>
+            <a-button type="primary" @click="saveCanvasQuota">保存配额</a-button>
+          </a-form-item>
+        </a-form>
       </a-tab-pane>
     </a-tabs>
   </div>
@@ -81,6 +104,11 @@ const configs = ref<any[]>([]);
 const showConfigModal = ref(false);
 const configForm = reactive({ provider: "seedance", name: "", endpoint: "", apiKey: "", model: "", isDefault: false });
 
+const canvasQuotaForm = reactive<{ daily_image_limit: number | null; daily_chat_tokens: number | null }>({
+  daily_image_limit: null,
+  daily_chat_tokens: null,
+});
+
 const configColumns = [
   { title: "Provider", dataIndex: "provider" },
   { title: "名称", dataIndex: "name" },
@@ -93,6 +121,28 @@ const configColumns = [
 async function fetchUser() {
   user.value = await getUser(userId);
   remark.value = user.value.remark || "";
+  const q = user.value.quota || {};
+  canvasQuotaForm.daily_image_limit =
+    typeof q.daily_image_limit === "number" && Number.isFinite(q.daily_image_limit) ? q.daily_image_limit : null;
+  canvasQuotaForm.daily_chat_tokens =
+    typeof q.daily_chat_tokens === "number" && Number.isFinite(q.daily_chat_tokens) ? q.daily_chat_tokens : null;
+}
+
+async function saveCanvasQuota() {
+  const merged: Record<string, unknown> = { ...(user.value?.quota || {}) };
+  if (canvasQuotaForm.daily_image_limit != null) {
+    merged.daily_image_limit = Number(canvasQuotaForm.daily_image_limit);
+  } else {
+    delete merged.daily_image_limit;
+  }
+  if (canvasQuotaForm.daily_chat_tokens != null) {
+    merged.daily_chat_tokens = Number(canvasQuotaForm.daily_chat_tokens);
+  } else {
+    delete merged.daily_chat_tokens;
+  }
+  await updateUser(userId, { quota: merged });
+  message.success("画布配额已保存");
+  await fetchUser();
 }
 async function fetchConfigs() { configs.value = (await getUserApiConfigs(userId)) as any; }
 

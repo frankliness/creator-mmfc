@@ -1,0 +1,10 @@
+import request from "./request";
+export const getUsers = (params) => request.get("/users", { params });
+export const getUser = (id) => request.get(`/users/${id}`);
+export const updateUser = (id, data) => request.patch(`/users/${id}`, data);
+export const resetPassword = (id) => request.post(`/users/${id}/reset-password`);
+export const getUserApiConfigs = (userId) => request.get(`/users/${userId}/api-configs`);
+export const createApiConfig = (userId, data) => request.post(`/users/${userId}/api-configs`, data);
+export const updateApiConfig = (userId, configId, data) => request.patch(`/users/${userId}/api-configs/${configId}`, data);
+export const deleteApiConfig = (userId, configId) => request.delete(`/users/${userId}/api-configs/${configId}`);
+export const testApiConfig = (userId, configId) => request.post(`/users/${userId}/api-configs/${configId}/test`);

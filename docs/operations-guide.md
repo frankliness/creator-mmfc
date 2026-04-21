@@ -163,7 +163,7 @@ GEMINI_MODEL="gemini-3.1-pro-preview"
 
 # Seedance
 SEEDANCE_API_KEY="<你的 Seedance API Key>"
-SEEDANCE_ENDPOINT="ep-20260328102217-9cg74"
+SEEDANCE_ENDPOINT="<你的 Seedance Endpoint ID>"
 SEEDANCE_MODEL="dreamina-seedance-2-0-260128"
 
 # GCS（可选，不配置则仅本地存储）
@@ -502,7 +502,7 @@ NEXTAUTH_URL="https://app.yourdomain.com"
 | `GEMINI_API_KEY` | 是 | — | Google Gemini API Key |
 | `GEMINI_MODEL` | 否 | gemini-3.1-pro-preview | Gemini 模型 |
 | `SEEDANCE_API_KEY` | 是 | — | BytePlus Seedance API Key |
-| `SEEDANCE_ENDPOINT` | 否 | ep-20260328102217-9cg74 | Seedance Endpoint ID |
+| `SEEDANCE_ENDPOINT` | 否 | — | Seedance Endpoint ID（由控制台提供） |
 | `SEEDANCE_MODEL` | 否 | dreamina-seedance-2-0-260128 | Seedance 模型 |
 | `GCS_BUCKET` | 否 | — | GCS 存储桶名称 |
 | `GCS_PROJECT_ID` | 否 | — | GCP 项目 ID |

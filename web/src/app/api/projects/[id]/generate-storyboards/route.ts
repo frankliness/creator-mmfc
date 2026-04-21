@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateStoryboards } from "@/lib/gemini";
 import { logTokenUsage } from "@/lib/token-logger";
+import { logUserAction } from "@/lib/user-action-logger";
 
 export const maxDuration = 120;
 
@@ -36,6 +37,19 @@ export async function POST(
     await prisma.project.update({
       where: { id },
       data: { status: "GENERATING_STORYBOARDS" },
+    });
+
+    await logUserAction({
+      userId: session.user.id,
+      category: "project",
+      action: "project.generate_storyboards.started",
+      targetType: "Project",
+      targetId: id,
+      projectId: id,
+      route: `/api/projects/${id}/generate-storyboards`,
+      metadata: {
+        creationMode: project.creationMode,
+      },
     });
 
     const { storyboards: results, usage, model } = await generateStoryboards({
@@ -97,12 +111,41 @@ export async function POST(
       data: { status: "REVIEW" },
     });
 
+    await logUserAction({
+      userId: session.user.id,
+      category: "project",
+      action: "project.generate_storyboards.completed",
+      targetType: "Project",
+      targetId: id,
+      projectId: id,
+      route: `/api/projects/${id}/generate-storyboards`,
+      metadata: {
+        count: results.length,
+        model,
+        inputTokens: String(usage.promptTokenCount ?? 0),
+        outputTokens: String(usage.candidatesTokenCount ?? 0),
+        totalTokens: String(usage.totalTokenCount ?? 0),
+      },
+    });
+
     return NextResponse.json({ count: results.length });
   } catch (err) {
     console.error("[generate-storyboards] error:", err);
     await prisma.project.update({
       where: { id },
       data: { status: "FAILED" },
+    });
+    await logUserAction({
+      userId: session.user.id,
+      category: "project",
+      action: "project.generate_storyboards.failed",
+      targetType: "Project",
+      targetId: id,
+      projectId: id,
+      route: `/api/projects/${id}/generate-storyboards`,
+      metadata: {
+        error: err instanceof Error ? err.message : "生成失败",
+      },
     });
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "生成失败" },

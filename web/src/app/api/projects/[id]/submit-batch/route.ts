@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { createSeedanceTask, type ApiConfig } from "@/lib/seedance";
 import { decrypt } from "@/lib/crypto";
+import { logUserAction } from "@/lib/user-action-logger";
 
 export async function POST(
   req: NextRequest,
@@ -68,7 +69,7 @@ export async function POST(
         seed: project.globalSeed,
       }, config);
 
-      await prisma.generationTask.create({
+      const createdTask = await prisma.generationTask.create({
         data: {
           storyboardId: sb.id,
           arkTaskId: result.id,
@@ -83,11 +84,29 @@ export async function POST(
         data: { status: "SUBMITTED" },
       });
 
+      await logUserAction({
+        userId: session.user.id,
+        category: "task",
+        action: "task.submit",
+        targetType: "GenerationTask",
+        targetId: createdTask.id,
+        projectId,
+        storyboardId: sb.id,
+        taskId: createdTask.id,
+        route: `/api/projects/${projectId}/submit-batch`,
+        metadata: {
+          taskId: createdTask.id,
+          arkTaskId: result.id,
+          model: result.model || process.env.SEEDANCE_ENDPOINT || process.env.SEEDANCE_MODEL || "",
+          submitMode: "batch",
+        },
+      });
+
       console.log(
         `[submit-batch] storyboard=${sb.id} arkTask=${result.id}`
       );
 
-      results.push({ storyboardId: sb.id, taskId: result.id });
+      results.push({ storyboardId: sb.id, taskId: createdTask.id });
     } catch (err) {
       console.error(`[submit-batch] storyboard=${sb.id} error:`, err);
       results.push({
@@ -100,6 +119,21 @@ export async function POST(
   await prisma.project.update({
     where: { id: projectId },
     data: { status: "GENERATING_VIDEOS" },
+  });
+
+  await logUserAction({
+    userId: session.user.id,
+    category: "project",
+    action: "project.submit_batch",
+    targetType: "Project",
+    targetId: projectId,
+    projectId,
+    route: `/api/projects/${projectId}/submit-batch`,
+    metadata: {
+      requested: storyboardIds.length,
+      submitted: results.filter((item) => item.taskId).length,
+      failed: results.filter((item) => item.error).length,
+    },
   });
 
   return NextResponse.json({ results });

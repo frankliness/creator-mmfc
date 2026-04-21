@@ -1,0 +1,39 @@
+# Docker build context = 仓库根目录后，需要排除大体积、运行态产物
+# 保持 web/ MMFC-canvas/ admin/ 三个子项目源码可见
+
+# 通用
+.git
+.gitignore
+.dockerignore
+.env
+.env.*
+*.log
+.DS_Store
+.vscode
+.idea
+.cursor
+.codex
+agent-transcripts
+
+# 各子项目依赖与产物
+**/node_modules
+**/dist
+**/.next
+**/.next-cache
+**/coverage
+**/.turbo
+**/build
+
+# Web 端本地数据
+web/data
+web/.env*
+web/public/canvas
+
+# Admin 本地数据
+admin/web/dist
+admin/server/dist
+
+# 文档不参与构建（只排除根级别，子项目内引用的图片必须保留给 vite/next 打包）
+docs
+nginx.conf
+/README*.md

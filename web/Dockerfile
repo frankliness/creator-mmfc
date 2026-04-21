@@ -1,23 +1,50 @@
+# syntax=docker/dockerfile:1.7
+#
+# Build context expected at REPO ROOT（docker-compose.yml 中
+# `web-app.build.context: .`、`dockerfile: ./web/Dockerfile`）。
+# 这样我们可以同时访问 web/ 与 MMFC-canvas/ 两个子项目。
 FROM node:20-alpine AS base
 
+# 1) 安装主站依赖
 FROM base AS deps
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY web/package.json web/package-lock.json ./
 RUN npm ci
 
+# 2) 安装画布依赖（MMFC-canvas 使用 pnpm 管理）
+FROM base AS canvas-deps
+WORKDIR /canvas
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+COPY MMFC-canvas/package.json MMFC-canvas/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+# 3) 构建画布前端 → /canvas/dist（vite base='/canvas/'）
+FROM base AS canvas-builder
+WORKDIR /canvas
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+COPY --from=canvas-deps /canvas/node_modules ./node_modules
+COPY MMFC-canvas/ ./
+RUN pnpm run build
+
+# 4) 构建主站
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY web/ ./
+# 把画布产物拷进 Next.js public/，部署后访问 /canvas/index.html 直达
+RUN mkdir -p ./public/canvas
+COPY --from=canvas-builder /canvas/dist/ ./public/canvas/
 RUN npx prisma generate
 RUN npm run build
 
+# 5) Runner
 FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
-RUN mkdir -p /data/videos && chown nextjs:nodejs /data/videos
+RUN mkdir -p /data/videos /data/canvas-images \
+ && chown -R nextjs:nodejs /data/videos /data/canvas-images
 
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

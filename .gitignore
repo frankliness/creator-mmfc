@@ -1,3 +1,6 @@
+# 仓库根目录 Cursor 本地规则（不提交；勿用 .cursor/ 以免误伤子目录内同名文件夹）
+/.cursor/
+
 # 依赖（各子项目）
 node_modules/
 
@@ -12,6 +15,11 @@ node_modules/
 **/vertexai-*.json
 **/*-service-account*.json
 **/*credentials*.json
+# Docker / 本地 GCS 绑定用（文件名不含 credentials 字面量，单独忽略）
+web/gcs-credentials.json
+
+# 管理端 Web：工具生成的旁路 JS，勿提交
+admin/web/**/*.vue.js
 
 # 构建与缓存
 .next/

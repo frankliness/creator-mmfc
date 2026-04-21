@@ -49,7 +49,7 @@ export async function userRoutes(app: FastifyInstance) {
           quota: true,
           remark: true,
           createdAt: true,
-          _count: { select: { projects: true, tokenUsages: true } },
+          _count: { select: { projects: true, tokenUsages: true, canvasProjects: true } },
         },
       }),
       prisma.user.count({ where }),
@@ -70,18 +70,32 @@ export async function userRoutes(app: FastifyInstance) {
         quota: true,
         remark: true,
         createdAt: true,
-        _count: { select: { projects: true, apiConfigs: true, tokenUsages: true } },
+        _count: {
+          select: { projects: true, apiConfigs: true, tokenUsages: true, canvasProjects: true },
+        },
       },
     });
 
     if (!user) return reply.code(404).send({ error: "用户不存在" });
 
-    const tokenSummary = await prisma.tokenUsageLog.aggregate({
-      where: { userId: id },
-      _sum: { totalTokens: true },
-    });
+    const [tokenSummary, canvasTokenSummary] = await Promise.all([
+      prisma.tokenUsageLog.aggregate({
+        where: { userId: id },
+        _sum: { totalTokens: true },
+      }),
+      prisma.canvasAiCall.aggregate({
+        where: { userId: id },
+        _sum: { totalTokens: true },
+        _count: true,
+      }),
+    ]);
 
-    return { ...user, totalTokens: tokenSummary._sum.totalTokens?.toString() ?? "0" };
+    return {
+      ...user,
+      totalTokens: tokenSummary._sum.totalTokens?.toString() ?? "0",
+      canvasTokenTotal: canvasTokenSummary._sum.totalTokens?.toString() ?? "0",
+      canvasCallCount: canvasTokenSummary._count,
+    };
   });
 
   app.patch("/:id", { preHandler: [requireRole("ADMIN")] }, async (request, reply) => {

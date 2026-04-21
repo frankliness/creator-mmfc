@@ -7,6 +7,23 @@
           <a-tag :color="statusColor(record.status)">{{ record.status }}</a-tag>
         </template>
         <template v-if="column.key === 'user'">{{ record.user?.email }}</template>
+        <template v-if="column.key === 'tokenTotal'">{{ Number(record.tokenSummary?.totalTokens || 0).toLocaleString() }}</template>
+        <template v-if="column.key === 'tokenModels'">
+          <a-popover v-if="record.tokenSummary?.byModel?.length" title="模型拆分" trigger="click">
+            <template #content>
+              <a-table
+                :columns="tokenModelColumns"
+                :data-source="record.tokenSummary.byModel"
+                :pagination="false"
+                size="small"
+                :row-key="(r: any) => `${r.provider}-${r.model}`"
+                style="width: 420px"
+              />
+            </template>
+            <a-button type="link" size="small">查看</a-button>
+          </a-popover>
+          <span v-else>-</span>
+        </template>
         <template v-if="column.key === 'action'">
           <a-button type="link" size="small" @click="$router.push(`/projects/${record.id}`)">详情</a-button>
         </template>
@@ -30,8 +47,17 @@ const columns = [
   { title: "状态", key: "status" },
   { title: "模式", dataIndex: "creationMode" },
   { title: "分镜数", dataIndex: ["_count", "storyboards"] },
+  { title: "总 Token", key: "tokenTotal", width: 140 },
+  { title: "模型拆分", key: "tokenModels", width: 100 },
   { title: "创建时间", dataIndex: "createdAt", customRender: ({ text }: any) => new Date(text).toLocaleDateString() },
   { title: "操作", key: "action", width: 80 },
+];
+
+const tokenModelColumns = [
+  { title: "Provider", dataIndex: "provider", width: 110 },
+  { title: "模型", dataIndex: "model", ellipsis: true },
+  { title: "Token", dataIndex: "total", width: 110, customRender: ({ text }: any) => Number(text).toLocaleString() },
+  { title: "次数", dataIndex: "count", width: 80 },
 ];
 
 function statusColor(s: string) {

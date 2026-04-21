@@ -24,6 +24,9 @@ services:
     # ports:
     #   - "5432:5432"
 
+  # 使用 admin/prisma/schema.prisma 做 db push。若卷内旧库与当前 schema 漂移，Prisma 可能要求
+  # 删除/重建表并提示 --accept-data-loss：优先 `docker compose build --no-cache db-init` 再 up；
+  # 仅开发库可在根 .env 设 PRISMA_ACCEPT_DATA_LOSS=1（会按 Prisma 提示丢弃冲突表数据，勿用于生产）。
   db-init:
     build:
       context: .
@@ -34,26 +37,37 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres}@postgres:5432/seedance
+      PRISMA_ACCEPT_DATA_LOSS: ${PRISMA_ACCEPT_DATA_LOSS:-0}
     working_dir: /app
     command:
-      [
-        "sh",
-        "-c",
-        "npx prisma db push --schema=./prisma/schema.prisma && npx tsx prisma/seed.ts && npx tsx scripts/seed-prompts.ts",
-      ]
+      - sh
+      - -c
+      - |
+        set -e
+        PUSH_FLAGS=""
+        if [ "$${PRISMA_ACCEPT_DATA_LOSS:-0}" = "1" ]; then
+          PUSH_FLAGS="--accept-data-loss"
+          echo "[db-init] prisma db push with --accept-data-loss (development only)"
+        fi
+        npx prisma db push --schema=./prisma/schema.prisma $$PUSH_FLAGS
+        npx tsx prisma/seed.ts
+        npx tsx scripts/seed-prompts.ts
 
   web-app:
+    # 注意：context 改为仓库根，Dockerfile 同时构建 web/ 与 MMFC-canvas/
     build:
-      context: ./web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./web/Dockerfile
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-3000}:3000"
     volumes:
-      # 宿主机目录：项目内 web/data/videos，便于本地直接查看/备份
+      # 视频产物
       - ./web/data/videos:/data/videos
-      # GCS 凭证：在根 .env 设置 GCS_CREDENTIALS_FILE=./web/your-key.json（不需要 GCS 可删此行与 GOOGLE_APPLICATION_CREDENTIALS）
-      - ${GCS_CREDENTIALS_FILE:-./web/vertexai-481302-d276c5053647.json}:/run/secrets/gcs-credentials.json:ro
+      # 画布生成图 / 参考图（与容器内 IMAGE_STORAGE_PATH 对齐）
+      - canvas_images:/data/canvas-images
+      # GCS 凭证：在根 .env 设置 GCS_CREDENTIALS_FILE=./web/gcs-credentials.json（未使用 GCS 请删本 bind mount，并勿将真实 JSON 提交仓库）
+      - ${GCS_CREDENTIALS_FILE:-./web/gcs-credentials.json}:/run/secrets/gcs-credentials.json:ro
     depends_on:
       db-init:
         condition: service_completed_successfully
@@ -68,22 +82,25 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-pro-preview}
       SEEDANCE_API_KEY: ${SEEDANCE_API_KEY:-}
-      SEEDANCE_ENDPOINT: ${SEEDANCE_ENDPOINT:-ep-20260328102217-9cg74}
+      SEEDANCE_ENDPOINT: ${SEEDANCE_ENDPOINT:-}
       SEEDANCE_MODEL: ${SEEDANCE_MODEL:-dreamina-seedance-2-0-260128}
       GCS_BUCKET: ${GCS_BUCKET:-}
       GCS_PROJECT_ID: ${GCS_PROJECT_ID:-}
-      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/run/secrets/gcs-credentials.json}
       VIDEO_STORAGE_PATH: /data/videos
+      # 画布生成 / 上传图片的存储目录（持久化卷 canvas_images 挂载到此处）
+      IMAGE_STORAGE_PATH: ${IMAGE_STORAGE_PATH:-/data/canvas-images}
 
   web-worker:
     build:
-      context: ./web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./web/Dockerfile
     restart: unless-stopped
     command: ["npx", "tsx", "src/worker/index.ts"]
     volumes:
       - ./web/data/videos:/data/videos
-      - ${GCS_CREDENTIALS_FILE:-./web/vertexai-481302-d276c5053647.json}:/run/secrets/gcs-credentials.json:ro
+      - canvas_images:/data/canvas-images
+      - ${GCS_CREDENTIALS_FILE:-./web/gcs-credentials.json}:/run/secrets/gcs-credentials.json:ro
     depends_on:
       db-init:
         condition: service_completed_successfully
@@ -96,8 +113,9 @@ services:
       SEEDANCE_MODEL: ${SEEDANCE_MODEL:-dreamina-seedance-2-0-260128}
       GCS_BUCKET: ${GCS_BUCKET:-}
       GCS_PROJECT_ID: ${GCS_PROJECT_ID:-}
-      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/run/secrets/gcs-credentials.json}
       VIDEO_STORAGE_PATH: /data/videos
+      IMAGE_STORAGE_PATH: ${IMAGE_STORAGE_PATH:-/data/canvas-images}
       WORKER_POLL_INTERVAL: ${WORKER_POLL_INTERVAL:-15000}
 
   admin-api:
@@ -105,6 +123,9 @@ services:
       context: .
       dockerfile: admin/server/Dockerfile
     restart: unless-stopped
+    volumes:
+      # 与 web-app 同卷，便于后台硬删画布项目时清理本地图片
+      - canvas_images:/data/canvas-images
     depends_on:
       db-init:
         condition: service_completed_successfully
@@ -116,6 +137,7 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
       PORT: "3100"
+      IMAGE_STORAGE_PATH: ${IMAGE_STORAGE_PATH:-/data/canvas-images}
     healthcheck:
       test:
         [
@@ -140,3 +162,4 @@ services:
 
 volumes:
   pgdata:
+  canvas_images:

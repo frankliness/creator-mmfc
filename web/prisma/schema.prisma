@@ -8,17 +8,19 @@ datasource db {
 }
 
 model User {
-  id           String          @id @default(uuid())
-  email        String          @unique
-  passwordHash String
-  name         String
-  status       UserStatus      @default(ACTIVE)
-  quota        Json?
-  remark       String?         @db.Text
-  projects     Project[]
-  apiConfigs   UserApiConfig[]
-  tokenUsages  TokenUsageLog[]
-  createdAt    DateTime        @default(now())
+  id             String          @id @default(uuid())
+  email          String          @unique
+  passwordHash   String
+  name           String
+  status         UserStatus      @default(ACTIVE)
+  quota          Json?
+  remark         String?         @db.Text
+  projects       Project[]
+  apiConfigs     UserApiConfig[]
+  tokenUsages    TokenUsageLog[]
+  actionLogs     UserActionLog[]
+  canvasProjects CanvasProject[]
+  createdAt      DateTime        @default(now())
 }
 
 enum UserStatus {
@@ -146,6 +148,31 @@ model TokenUsageLog {
   @@index([userId, createdAt])
 }
 
+model UserActionLog {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  category     String
+  action       String
+  targetType   String
+  targetId     String?
+  projectId    String?
+  storyboardId String?
+  taskId       String?
+  route        String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([category])
+  @@index([action])
+  @@index([targetType])
+  @@index([projectId])
+  @@index([taskId])
+  @@index([createdAt])
+  @@index([userId, createdAt])
+}
+
 model PromptTemplate {
   id          String         @id @default(uuid())
   name        String
@@ -210,4 +237,105 @@ enum TaskStatus {
   FAILED
   PERSISTING
   PERSISTED
+}
+
+// ──────────────────────────────────────────────
+// Canvas module (MMFC-canvas integration)
+// ──────────────────────────────────────────────
+
+model CanvasProject {
+  id        String         @id @default(uuid())
+  userId    String
+  user      User           @relation(fields: [userId], references: [id])
+  name      String
+  thumbnail String?        @db.Text
+  viewport  Json           @default("{\"x\":100,\"y\":50,\"zoom\":0.8}")
+  status    CanvasStatus   @default(ACTIVE)
+  nodes     CanvasNode[]
+  edges     CanvasEdge[]
+  assets    CanvasAsset[]
+  aiCalls   CanvasAiCall[]
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@index([userId])
+  @@index([userId, updatedAt])
+}
+
+enum CanvasStatus {
+  ACTIVE
+  ARCHIVED
+  DELETED
+}
+
+model CanvasNode {
+  id        String        @id
+  projectId String
+  project   CanvasProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type      String
+  position  Json
+  data      Json
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([projectId])
+}
+
+model CanvasEdge {
+  id           String        @id
+  projectId    String
+  project      CanvasProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  source       String
+  target       String
+  sourceHandle String?
+  targetHandle String?
+  type         String?
+  data         Json?
+
+  @@index([projectId])
+}
+
+model CanvasAsset {
+  id           String          @id @default(uuid())
+  projectId    String
+  project      CanvasProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId       String
+  kind         CanvasAssetKind
+  mimeType     String
+  bytes        Int
+  localPath    String?
+  gcsPath      String?
+  publicUrl    String?         @db.Text
+  sourceNodeId String?
+  createdAt    DateTime        @default(now())
+
+  @@index([projectId])
+  @@index([userId])
+}
+
+enum CanvasAssetKind {
+  GENERATED_IMAGE
+  UPLOADED_IMAGE
+  GENERATED_VIDEO
+}
+
+model CanvasAiCall {
+  id           String         @id @default(uuid())
+  projectId    String?
+  project      CanvasProject? @relation(fields: [projectId], references: [id])
+  userId       String
+  callType     String
+  provider     String         @default("gemini-canvas")
+  model        String
+  inputTokens  BigInt         @default(0)
+  outputTokens BigInt         @default(0)
+  totalTokens  BigInt         @default(0)
+  imageCount   Int            @default(0)
+  durationMs   Int?
+  status       String
+  error        String?        @db.Text
+  createdAt    DateTime       @default(now())
+
+  @@index([userId, createdAt])
+  @@index([projectId])
 }

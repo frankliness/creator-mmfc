@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { createSeedanceTask, type ApiConfig } from "@/lib/seedance";
 import { decrypt } from "@/lib/crypto";
+import { logUserAction } from "@/lib/user-action-logger";
 
 export async function POST(
   _req: NextRequest,
@@ -61,7 +62,7 @@ export async function POST(
       seed: storyboard.project.globalSeed,
     }, config);
 
-    await prisma.generationTask.create({
+    const createdTask = await prisma.generationTask.create({
       data: {
         storyboardId: id,
         arkTaskId: result.id,
@@ -76,11 +77,29 @@ export async function POST(
       data: { status: "SUBMITTED" },
     });
 
+    await logUserAction({
+      userId: session.user.id,
+      category: "task",
+      action: "task.submit",
+      targetType: "GenerationTask",
+      targetId: createdTask.id,
+      projectId: storyboard.projectId,
+      storyboardId: id,
+      taskId: createdTask.id,
+      route: `/api/storyboards/${id}/submit`,
+      metadata: {
+        taskId: createdTask.id,
+        arkTaskId: result.id,
+        model: result.model || process.env.SEEDANCE_ENDPOINT || process.env.SEEDANCE_MODEL || "",
+        submitMode: "single",
+      },
+    });
+
     console.log(
       `[submit-storyboard] storyboard=${id} arkTask=${result.id}`
     );
 
-    return NextResponse.json({ taskId: result.id });
+    return NextResponse.json({ taskId: createdTask.id, arkTaskId: result.id });
   } catch (err) {
     console.error("[submit-storyboard] error:", err);
     return NextResponse.json(

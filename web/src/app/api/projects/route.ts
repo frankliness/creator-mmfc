@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { logUserAction } from "@/lib/user-action-logger";
 import { z } from "zod";
 
 const ratioEnum = z.enum(["16:9", "9:16", "4:3", "3:4", "1:1", "21:9"]);
@@ -90,6 +91,21 @@ export async function POST(req: NextRequest) {
               status: "REVIEW",
             }
           : base,
+    });
+
+    await logUserAction({
+      userId: session.user.id,
+      category: "project",
+      action: "project.create",
+      targetType: "Project",
+      targetId: project.id,
+      projectId: project.id,
+      route: "/api/projects",
+      metadata: {
+        name: project.name,
+        creationMode: project.creationMode,
+        status: project.status,
+      },
     });
 
     return NextResponse.json(project, { status: 201 });

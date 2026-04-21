@@ -26,6 +26,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
+import {
+  DEFAULT_MANUAL_STORYBOARD_DURATION,
+  formatManualStoryboardDuration,
+  isValidManualStoryboardDuration,
+  MANUAL_STORYBOARD_DURATION_HINT,
+  MANUAL_STORYBOARD_DURATION_OPTIONS,
+} from "@/lib/storyboard-duration";
 import { toast } from "sonner";
 
 interface ProjectShape {
@@ -70,10 +77,13 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
 
   const [addOpen, setAddOpen] = useState(false);
   const [newPrompt, setNewPrompt] = useState("");
-  const [newDuration, setNewDuration] = useState("10");
+  const [newDuration, setNewDuration] = useState(
+    String(DEFAULT_MANUAL_STORYBOARD_DURATION)
+  );
   const [newAssets, setNewAssets] = useState<AssetRow[]>([]);
   const [savingSb, setSavingSb] = useState(false);
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setName(project.name);
     setStyle(project.style);
@@ -84,6 +94,7 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
     setAssetsJsonText(JSON.stringify(project.assetsJson ?? {}, null, 2));
     setDescText(JSON.stringify(project.assetDescriptions ?? {}, null, 2));
   }, [project]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   async function saveProject() {
     let assetsJson: unknown = {};
@@ -128,7 +139,7 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
 
   function openAddStoryboard() {
     setNewPrompt("");
-    setNewDuration("10");
+    setNewDuration(String(DEFAULT_MANUAL_STORYBOARD_DURATION));
     setNewAssets([]);
     setAddOpen(true);
   }
@@ -146,13 +157,18 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
       toast.error("请填写提示词");
       return;
     }
+    const duration = Number(newDuration);
+    if (!isValidManualStoryboardDuration(duration)) {
+      toast.error(MANUAL_STORYBOARD_DURATION_HINT);
+      return;
+    }
     setSavingSb(true);
     const res = await fetch(`/api/projects/${project.id}/storyboards`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         prompt: newPrompt,
-        duration: parseInt(newDuration, 10),
+        duration,
         assetBindings: newAssets,
       }),
     });
@@ -281,14 +297,17 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
             </p>
             <div className="space-y-2">
               <Label>时长（秒）</Label>
+              <p className="text-xs text-muted-foreground">
+                {MANUAL_STORYBOARD_DURATION_HINT}
+              </p>
               <Select value={newDuration} onValueChange={(v) => v && setNewDuration(v)}>
                 <SelectTrigger className="w-32">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {[10, 11, 12, 13, 14, 15].map((d) => (
+                  {MANUAL_STORYBOARD_DURATION_OPTIONS.map((d) => (
                     <SelectItem key={d} value={String(d)}>
-                      {d}s
+                      {formatManualStoryboardDuration(d)}
                     </SelectItem>
                   ))}
                 </SelectContent>

@@ -3,6 +3,7 @@ import { prisma } from "../../common/prisma.js";
 import { requireAuth, requireRole } from "../../common/guards/rbac.js";
 import { paginationSchema, paginate, paginatedResponse } from "../../common/pagination.js";
 import { createAuditLog } from "../../common/audit.js";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 const listQuerySchema = paginationSchema.extend({
@@ -40,7 +41,50 @@ export async function projectRoutes(app: FastifyInstance) {
       prisma.project.count({ where }),
     ]);
 
-    return paginatedResponse(data, total, query.page, query.size);
+    const projectIds = data.map((item) => item.id);
+    const tokenRows = projectIds.length === 0
+      ? []
+      : await prisma.$queryRaw<
+          { projectId: string; provider: string; model: string; total: bigint; count: bigint }[]
+        >(Prisma.sql`
+          SELECT "projectId",
+                 "provider",
+                 "model",
+                 SUM("totalTokens") AS total,
+                 COUNT(*)::bigint AS count
+          FROM "TokenUsageLog"
+          WHERE "projectId" IN (${Prisma.join(projectIds)})
+          GROUP BY "projectId", "provider", "model"
+        `);
+
+    const tokenMap = new Map<string, { totalTokens: string; requestCount: number; byModel: Array<{ provider: string; model: string; total: string; count: number }> }>();
+    for (const row of tokenRows) {
+      const entry = tokenMap.get(row.projectId) ?? {
+        totalTokens: "0",
+        requestCount: 0,
+        byModel: [],
+      };
+      entry.totalTokens = String(BigInt(entry.totalTokens) + row.total);
+      entry.requestCount += Number(row.count);
+      entry.byModel.push({
+        provider: row.provider,
+        model: row.model,
+        total: row.total.toString(),
+        count: Number(row.count),
+      });
+      tokenMap.set(row.projectId, entry);
+    }
+
+    const enriched = data.map((item) => ({
+      ...item,
+      tokenSummary: tokenMap.get(item.id) ?? {
+        totalTokens: "0",
+        requestCount: 0,
+        byModel: [],
+      },
+    }));
+
+    return paginatedResponse(enriched, total, query.page, query.size);
   });
 
   app.get("/:id", async (request, reply) => {
@@ -57,7 +101,41 @@ export async function projectRoutes(app: FastifyInstance) {
     });
 
     if (!project) return reply.code(404).send({ error: "项目不存在" });
-    return project;
+    const [tokenAgg, tokenByModel] = await Promise.all([
+      prisma.tokenUsageLog.aggregate({
+        where: { projectId: id },
+        _sum: { inputTokens: true, outputTokens: true, totalTokens: true },
+        _count: true,
+      }),
+      prisma.$queryRaw<
+        { provider: string; model: string; total: bigint; count: bigint }[]
+      >(Prisma.sql`
+        SELECT "provider",
+               "model",
+               SUM("totalTokens") AS total,
+               COUNT(*)::bigint AS count
+        FROM "TokenUsageLog"
+        WHERE "projectId" = ${id}
+        GROUP BY "provider", "model"
+        ORDER BY total DESC
+      `),
+    ]);
+
+    return {
+      ...project,
+      tokenSummary: {
+        requestCount: tokenAgg._count,
+        inputTokens: tokenAgg._sum.inputTokens?.toString() ?? "0",
+        outputTokens: tokenAgg._sum.outputTokens?.toString() ?? "0",
+        totalTokens: tokenAgg._sum.totalTokens?.toString() ?? "0",
+        byModel: tokenByModel.map((row) => ({
+          provider: row.provider,
+          model: row.model,
+          total: row.total.toString(),
+          count: Number(row.count),
+        })),
+      },
+    };
   });
 
   app.delete("/:id", { preHandler: [requireRole("ADMIN")] }, async (request, reply) => {

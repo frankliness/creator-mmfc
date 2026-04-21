@@ -2,11 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { nextSequentialStoryboardId } from "@/lib/storyboard-id";
+import { isValidManualStoryboardDuration } from "@/lib/storyboard-duration";
+import { logUserAction } from "@/lib/user-action-logger";
 import { z } from "zod";
 
 const createBodySchema = z.object({
   prompt: z.string().min(1, "提示词不能为空"),
-  duration: z.number().int().min(10).max(15),
+  duration: z
+    .number()
+    .refine(isValidManualStoryboardDuration, "时长仅支持整数秒：4-15 或 -1"),
   assetBindings: z.array(
     z.object({
       index_label: z.string(),
@@ -85,6 +89,21 @@ export async function POST(
   });
 
   console.log(`[manual-storyboard] project=${projectId} created ${storyboardId}`);
+
+  await logUserAction({
+    userId: session.user.id,
+    category: "storyboard",
+    action: "storyboard.create",
+    targetType: "Storyboard",
+    targetId: created.id,
+    projectId,
+    storyboardId: created.id,
+    route: `/api/projects/${projectId}/storyboards`,
+    metadata: {
+      storyboardCode: created.storyboardId,
+      duration: created.duration,
+    },
+  });
 
   return NextResponse.json(created, { status: 201 });
 }

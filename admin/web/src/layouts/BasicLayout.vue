@@ -17,6 +17,10 @@
           <template #icon><ProjectOutlined /></template>
           <span>项目管理</span>
         </a-menu-item>
+        <a-menu-item key="/canvas-projects">
+          <template #icon><AppstoreOutlined /></template>
+          <span>AI 画布项目</span>
+        </a-menu-item>
         <a-menu-item key="/tasks">
           <template #icon><ThunderboltOutlined /></template>
           <span>任务管理</span>
@@ -28,6 +32,10 @@
         <a-menu-item key="/token-usage">
           <template #icon><BarChartOutlined /></template>
           <span>Token 统计</span>
+        </a-menu-item>
+        <a-menu-item key="/user-action-logs">
+          <template #icon><HistoryOutlined /></template>
+          <span>用户操作日志</span>
         </a-menu-item>
         <a-menu-item key="/audit-logs">
           <template #icon><AuditOutlined /></template>
@@ -72,8 +80,8 @@ import { ref, computed, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useUserStore } from "@/store/user";
 import {
-  DashboardOutlined, UserOutlined, ProjectOutlined,
-  ThunderboltOutlined, FileTextOutlined, BarChartOutlined,
+  DashboardOutlined, UserOutlined, ProjectOutlined, AppstoreOutlined,
+  ThunderboltOutlined, FileTextOutlined, BarChartOutlined, HistoryOutlined,
   AuditOutlined, SettingOutlined,
 } from "@ant-design/icons-vue";
 
@@ -86,8 +94,10 @@ const selectedKeys = computed(() => {
   const path = route.path;
   if (path.startsWith("/users")) return ["/users"];
   if (path.startsWith("/projects")) return ["/projects"];
+  if (path.startsWith("/canvas-projects")) return ["/canvas-projects"];
   if (path.startsWith("/tasks")) return ["/tasks"];
   if (path.startsWith("/prompts")) return ["/prompts"];
+  if (path.startsWith("/user-action-logs")) return ["/user-action-logs"];
   return [path];
 });
 

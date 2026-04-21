@@ -14,6 +14,23 @@
       <a-descriptions-item label="风格" :span="2">{{ project.style }}</a-descriptions-item>
     </a-descriptions>
 
+    <a-card title="Token 统计" size="small" style="margin-bottom: 16px">
+      <a-descriptions bordered :column="4" size="small">
+        <a-descriptions-item label="总 Token">{{ Number(project.tokenSummary?.totalTokens || 0).toLocaleString() }}</a-descriptions-item>
+        <a-descriptions-item label="输入 Token">{{ Number(project.tokenSummary?.inputTokens || 0).toLocaleString() }}</a-descriptions-item>
+        <a-descriptions-item label="输出 Token">{{ Number(project.tokenSummary?.outputTokens || 0).toLocaleString() }}</a-descriptions-item>
+        <a-descriptions-item label="请求次数">{{ Number(project.tokenSummary?.requestCount || 0).toLocaleString() }}</a-descriptions-item>
+      </a-descriptions>
+      <a-table
+        style="margin-top: 12px"
+        :columns="tokenColumns"
+        :data-source="project.tokenSummary?.byModel || []"
+        :pagination="false"
+        row-key="model"
+        size="small"
+      />
+    </a-card>
+
     <a-card title="分镜列表" size="small">
       <a-collapse>
         <a-collapse-panel v-for="sb in project.storyboards" :key="sb.id" :header="`${sb.storyboardId} - ${sb.status} (${sb.duration}s)`">
@@ -38,7 +55,14 @@ const taskColumns = [
   { title: "任务ID", dataIndex: "arkTaskId", ellipsis: true },
   { title: "状态", dataIndex: "status" },
   { title: "模型", dataIndex: "model" },
-  { title: "Token", dataIndex: "totalTokens" },
+  { title: "Token", dataIndex: "totalTokens", customRender: ({ text }: any) => Number(text || 0).toLocaleString() },
+];
+
+const tokenColumns = [
+  { title: "Provider", dataIndex: "provider", width: 120 },
+  { title: "模型", dataIndex: "model", ellipsis: true },
+  { title: "Token", dataIndex: "total", width: 140, customRender: ({ text }: any) => Number(text || 0).toLocaleString() },
+  { title: "次数", dataIndex: "count", width: 100 },
 ];
 
 onMounted(async () => { project.value = await getProject(route.params.id as string); });

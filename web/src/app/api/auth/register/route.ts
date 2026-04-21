@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { logUserAction } from "@/lib/user-action-logger";
 import { z } from "zod";
 
 const registerSchema = z.object({
@@ -30,6 +31,19 @@ export async function POST(req: NextRequest) {
     const passwordHash = await hash(password, 12);
     const user = await prisma.user.create({
       data: { email, passwordHash, name },
+    });
+
+    await logUserAction({
+      userId: user.id,
+      category: "auth",
+      action: "auth.register",
+      targetType: "User",
+      targetId: user.id,
+      route: "/api/auth/register",
+      metadata: {
+        email: user.email,
+        name: user.name,
+      },
     });
 
     return NextResponse.json(
