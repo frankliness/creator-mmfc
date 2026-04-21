@@ -38,20 +38,11 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres}@postgres:5432/seedance
       PRISMA_ACCEPT_DATA_LOSS: ${PRISMA_ACCEPT_DATA_LOSS:-0}
+      # 默认 0：不运行 seed-prompts，避免用代码覆盖数据库中已维护的 Prompt 模板。
+      # 全新环境若占位文案需从代码灌入，可在根 .env 设 SEED_PROMPTS_FROM_CODE=1 后单独跑 db-init。
+      SEED_PROMPTS_FROM_CODE: ${SEED_PROMPTS_FROM_CODE:-0}
     working_dir: /app
-    command:
-      - sh
-      - -c
-      - |
-        set -e
-        PUSH_FLAGS=""
-        if [ "$${PRISMA_ACCEPT_DATA_LOSS:-0}" = "1" ]; then
-          PUSH_FLAGS="--accept-data-loss"
-          echo "[db-init] prisma db push with --accept-data-loss (development only)"
-        fi
-        npx prisma db push --schema=./prisma/schema.prisma $$PUSH_FLAGS
-        npx tsx prisma/seed.ts
-        npx tsx scripts/seed-prompts.ts
+    command: ["sh", "./scripts/db-init.sh"]
 
   web-app:
     # 注意：context 改为仓库根，Dockerfile 同时构建 web/ 与 MMFC-canvas/

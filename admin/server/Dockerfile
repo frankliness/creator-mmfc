@@ -16,10 +16,12 @@ COPY --from=builder /app/server/dist ./dist
 COPY --from=builder /app/server/node_modules ./node_modules
 COPY --from=builder /app/server/package.json ./
 COPY --from=builder /app/prisma ./prisma
-# db-init 运行 seed-prompts 时读取（与代码库同步）
+# db-init：scripts/db-init.sh（PRISMA_ACCEPT_DATA_LOSS、可选 seed-prompts，见根 docker-compose）
 COPY web/src/lib/prompts/director-system.ts web/src/lib/prompts/storyboard-schema.ts ./seed-web/prompts/
 COPY web/src/lib/gemini.ts ./seed-web/gemini.ts
 COPY admin/scripts/seed-prompts.ts ./scripts/seed-prompts.ts
+COPY admin/scripts/db-init.sh ./scripts/db-init.sh
+RUN chmod +x ./scripts/db-init.sh
 ENV NODE_ENV=production
 ENV SEED_PROMPT_SOURCE_DIR=/app/seed-web/prompts
 ENV SEED_GEMINI_FILE=/app/seed-web/gemini.ts
