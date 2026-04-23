@@ -24,35 +24,24 @@ export interface GenerateStoryboardsResult {
   model: string;
 }
 
-export async function generateStoryboards(input: GeminiRequest): Promise<GenerateStoryboardsResult> {
-  const apiKey = await getGlobalConfig("gemini_api_key") || process.env.GEMINI_API_KEY;
-  const model = await getGlobalConfig("gemini_model") || process.env.GEMINI_MODEL || "gemini-3.1-pro-preview";
-
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY 未配置");
-  }
-
-  const systemPrompt = await getPrompt("director_system", DIRECTOR_SYSTEM_PROMPT);
-  const responseSchema = await getJsonSchemaPrompt("storyboard_schema", STORYBOARD_RESPONSE_SCHEMA);
-
-  const userPrompt = `你将为一个 Seedance 2.0 视频生成工作流生成结构化分镜数据。
+const userPrompt = `你将为一个 Seedance 2.0 视频生成工作流生成结构化分镜数据。
 
 输入信息如下：
 
 严格按照以下剧集内容执行/设计分镜【剧本 / 需求】
-${input.script}
+\${input.script}
 
 【资产列表】
-${input.assets}
+\${input.assets}
 
 本剧集【完整剧本】便于理解全局世界观和剧情，不做为本次分镜的内容依据
-${input.fullScript}
+\${input.fullScript}
 
 本剧集出现的人物/场景描述，一切关于人物和场景的描述，都按照下面的设定
-${input.assetDescriptions}
+\${input.assetDescriptions}
 
 【美术/视觉风格】
-${input.style}
+\${input.style}
 
 请根据以下规则工作：
 
@@ -80,6 +69,36 @@ ${input.style}
 - 尾镜必须根据情况承担动作桥梁、转场引导或悬念钩子功能。
 - 画面默认干净无字幕、无Logo、无水印、无UI；若用户另有要求，以用户要求为准。`;
 
+function renderUserPromptTemplate(template: string, input: GeminiRequest): string {
+  const replacements: Record<string, string> = {
+    "${input.script}": input.script,
+    "${input.assets}": input.assets,
+    "${input.fullScript}": input.fullScript,
+    "${input.assetDescriptions}": input.assetDescriptions,
+    "${input.style}": input.style,
+  };
+
+  let rendered = template;
+  for (const [placeholder, value] of Object.entries(replacements)) {
+    rendered = rendered.split(placeholder).join(value);
+  }
+
+  return rendered;
+}
+
+export async function generateStoryboards(input: GeminiRequest): Promise<GenerateStoryboardsResult> {
+  const apiKey = await getGlobalConfig("gemini_api_key") || process.env.GEMINI_API_KEY;
+  const model = await getGlobalConfig("gemini_model") || process.env.GEMINI_MODEL || "gemini-3.1-pro-preview";
+
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY 未配置");
+  }
+
+  const systemPrompt = await getPrompt("director_system", DIRECTOR_SYSTEM_PROMPT);
+  const responseSchema = await getJsonSchemaPrompt("storyboard_schema", STORYBOARD_RESPONSE_SCHEMA);
+  const userPromptTemplate = await getPrompt("user_prompt_template", userPrompt);
+  const finalUserPrompt = renderUserPromptTemplate(userPromptTemplate, input);
+
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const response = await fetch(url, {
@@ -93,12 +112,12 @@ ${input.style}
       contents: [
         {
           role: "user",
-          parts: [{ text: userPrompt }],
+          parts: [{ text: finalUserPrompt }],
         },
       ],
       generationConfig: {
         maxOutputTokens: 65535,
-        temperature: 0.9,
+        temperature: 0.5,
         thinkingConfig: { thinkingBudget: 30000 },
         responseMimeType: "application/json",
         responseSchema,
