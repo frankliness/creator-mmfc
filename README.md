@@ -1,5 +1,7 @@
 # Creator MMFC
 
+**版本：1.1.0**
+
 面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，可选 **GCS** 做对象存储。
 
 ## 仓库结构
