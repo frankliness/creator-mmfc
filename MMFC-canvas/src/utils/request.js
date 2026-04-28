@@ -36,7 +36,7 @@ instance.interceptors.response.use(
 
     if (response) {
       const { status, data } = response
-      const message = data?.error || data?.message || data?.error?.message || error.message
+      const message = data?.message || data?.error?.message || data?.error || error.message
 
       if (status === 401) {
         window.$message?.error('会话已失效，请刷新页面重新登录主站')

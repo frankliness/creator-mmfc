@@ -120,16 +120,16 @@ export default function ProjectPage() {
             {refreshing ? "刷新中..." : "刷新状态"}
           </Button>
           {project.creationMode !== "MANUAL" &&
-            (project.status === "DRAFT" || project.status === "FAILED") && (
-            <Button onClick={handleGenerateStoryboards}>
-              生成分镜
-            </Button>
-          )}
-          {project.creationMode !== "MANUAL" && project.status === "REVIEW" && (
-            <Button onClick={handleGenerateStoryboards} variant="outline">
-              重新生成分镜
-            </Button>
-          )}
+            ["DRAFT", "FAILED", "REVIEW", "COMPLETED"].includes(
+              project.status
+            ) && (
+              <Button
+                onClick={handleGenerateStoryboards}
+                variant="outline"
+              >
+                重新生成分镜
+              </Button>
+            )}
         </div>
       </div>
 

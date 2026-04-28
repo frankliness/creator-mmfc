@@ -64,7 +64,8 @@ export async function projectRoutes(app: FastifyInstance) {
         requestCount: 0,
         byModel: [],
       };
-      entry.totalTokens = String(BigInt(entry.totalTokens) + row.total);
+      // $queryRaw 的 SUM(bigint) 经 Prisma 映射后不是 JS bigint，直接与 BigInt 相加会退化成字符串拼接（如 "0"+139756 → "0139756"）。
+      entry.totalTokens = (BigInt(entry.totalTokens) + BigInt(String(row.total))).toString();
       entry.requestCount += Number(row.count);
       entry.byModel.push({
         provider: row.provider,

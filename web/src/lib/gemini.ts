@@ -24,6 +24,30 @@ export interface GenerateStoryboardsResult {
   model: string;
 }
 
+/** Gemini 可能返回多个 parts（thinking 模型 + includeThoughts，或 JSON 落在后续 part）。 */
+function extractGeminiCandidateJsonText(result: {
+  candidates?: Array<{
+    finishReason?: string;
+    content?: { parts?: Array<{ text?: string; thought?: boolean }> };
+  }>;
+}): string | undefined {
+  const candidate = result.candidates?.[0];
+  const parts = candidate?.content?.parts ?? [];
+  if (parts.length === 0) return undefined;
+
+  const hasThoughtFlagged = parts.some((p) => p.thought === true);
+  const usable = hasThoughtFlagged ? parts.filter((p) => p.thought !== true) : parts;
+
+  const chunks = usable
+    .map((p) => (typeof p.text === "string" ? p.text : ""))
+    .filter((t) => t.length > 0);
+  if (chunks.length === 0) return undefined;
+
+  const joined = chunks.join("");
+  const trimmed = joined.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 const userPrompt = `你将为一个 Seedance 2.0 视频生成工作流生成结构化分镜数据。
 
 输入信息如下：
@@ -132,10 +156,28 @@ export async function generateStoryboards(input: GeminiRequest): Promise<Generat
   }
 
   const result = await response.json();
-  const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+  const text = extractGeminiCandidateJsonText(result);
 
   if (!text) {
-    throw new Error("Gemini 返回内容为空");
+    const c0 = result.candidates?.[0];
+    const parts = c0?.content?.parts ?? [];
+    const usage = result.usageMetadata ?? {};
+    console.error("[gemini] empty response text", {
+      finishReason: c0?.finishReason,
+      candidateCount: result.candidates?.length ?? 0,
+      partCount: parts.length,
+      parts: parts.map((p: { text?: string; thought?: boolean }, i: number) => ({
+        i,
+        thought: p.thought,
+        textLen: typeof p.text === "string" ? p.text.length : 0,
+      })),
+      promptFeedback: result.promptFeedback,
+      usage,
+    });
+    const fr = c0?.finishReason ? ` finishReason=${c0.finishReason}` : "";
+    const th = typeof usage.thoughtsTokenCount === "number" ? ` thoughtsTokenCount=${usage.thoughtsTokenCount}` : "";
+    const ct = typeof usage.candidatesTokenCount === "number" ? ` candidatesTokenCount=${usage.candidatesTokenCount}` : "";
+    throw new Error(`Gemini 返回内容为空（多为输出预算被思考占满导致 MAX_TOKENS 且无可见 JSON）${fr}${th}${ct}`);
   }
 
   const usageMetadata: GeminiUsageMetadata = result.usageMetadata ?? {};

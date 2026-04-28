@@ -33,6 +33,21 @@ export async function POST(
     );
   }
 
+  const canGenerateStoryboards =
+    project.status === "DRAFT" ||
+    project.status === "FAILED" ||
+    project.status === "REVIEW" ||
+    project.status === "COMPLETED";
+  if (!canGenerateStoryboards) {
+    const message =
+      project.status === "GENERATING_STORYBOARDS"
+        ? "正在生成分镜，请稍后再试"
+        : project.status === "GENERATING_VIDEOS"
+          ? "正在生成视频中，请稍后再试"
+          : "当前项目状态不支持生成分镜";
+    return NextResponse.json({ error: message }, { status: 409 });
+  }
+
   try {
     await prisma.project.update({
       where: { id },

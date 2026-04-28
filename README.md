@@ -1,6 +1,6 @@
 # Creator MMFC
 
-**版本：1.1.0**
+**版本：1.1.1**
 
 面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，可选 **GCS** 做对象存储。
 
@@ -21,6 +21,19 @@
 
 - [管理后台说明](admin/README.md)
 - [MMFC-canvas 画布说明](MMFC-canvas/README.md)
+- [系统架构说明](ARCHITECTURE.md)（模块边界、数据流、部署与模型）
+
+### 版本 1.1.1 更新摘要
+
+相对 **1.1.0** 的主要变更：
+
+- **画布数据模型**：`CanvasNode` / `CanvasEdge` 使用复合主键 `(projectId, id)`，并附带 Prisma 迁移 `web/prisma/migrations/20260424000000_canvas_node_edge_compound_pk`，避免跨项目节点/边 ID 冲突。
+- **画布快照 API**（`PUT /api/canvas/projects/[id]/snapshot`）：加强请求体验证（含重复节点 ID 检测）；空画布覆写需显式 `confirmEmptySnapshot: true`，否则返回 **409** 与 `empty_snapshot_requires_confirm`，防止误清空。
+- **MMFC Studio Canvas**：项目画布缓存与水合状态（`hydratedProjectIds`）、默认视口常量、对空快照 409 的静默处理，与后端语义对齐。
+- **用户端与管理端**：分镜生成路由、Gemini 调用与 `canvas-storage`、管理端项目路由及 Docker / `.env.docker.example` 等配套调整。
+- **文档**：新增根目录 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
+升级已有数据库时，请在部署流程中执行 `prisma migrate deploy`（或按你方 CI 等价步骤）应用上述迁移。
 
 ## 环境要求
 

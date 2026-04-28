@@ -22,6 +22,12 @@ export const currentProject = computed(() => {
 // 项目画布数据缓存：projectId -> { nodes, edges, viewport }
 // canvas.js 在 loadProject 中先 await fetchProjectDetail，再 getProjectCanvas 同步取
 const canvasDataCache = new Map()
+const hydratedProjectIds = new Set()
+const DEFAULT_VIEWPORT = { x: 100, y: 50, zoom: 0.8 }
+
+const isEmptyCanvas = (canvasData) => {
+  return (canvasData.nodes?.length || 0) === 0 && (canvasData.edges?.length || 0) === 0
+}
 
 // 缩略图自动从图片节点推断
 const inferThumbnailFromNodes = (nodes = []) => {
@@ -86,14 +92,16 @@ export const fetchProjectDetail = async (id) => {
     const canvasData = {
       nodes: Array.isArray(detail.nodes) ? detail.nodes : [],
       edges: Array.isArray(detail.edges) ? detail.edges : [],
-      viewport: detail.viewport || { x: 100, y: 50, zoom: 0.8 }
+      viewport: detail.viewport || DEFAULT_VIEWPORT
     }
     canvasDataCache.set(id, canvasData)
+    hydratedProjectIds.add(id)
     upsertProjectInList(normalizeProject(detail))
     return canvasData
   } catch (err) {
     console.error('[projects] fetchProjectDetail failed:', err)
     canvasDataCache.delete(id)
+    hydratedProjectIds.delete(id)
     return null
   }
 }
@@ -114,8 +122,9 @@ export const createProject = async (name = '未命名项目') => {
     canvasDataCache.set(normalized.id, {
       nodes: [],
       edges: [],
-      viewport: normalized.viewport || { x: 100, y: 50, zoom: 0.8 }
+      viewport: normalized.viewport || DEFAULT_VIEWPORT
     })
+    hydratedProjectIds.add(normalized.id)
     return normalized.id
   } catch (err) {
     console.error('[projects] createProject failed:', err)
@@ -167,6 +176,10 @@ const flushSnapshot = async (id) => {
       data: payload
     })
   } catch (err) {
+    const data = err?.response?.data
+    if (err?.response?.status === 409 && data?.error === 'empty_snapshot_requires_confirm') {
+      return
+    }
     console.error('[projects] snapshot save failed:', err)
   }
 }
@@ -177,12 +190,19 @@ const flushSnapshot = async (id) => {
 export const updateProjectCanvas = async (id, canvasData = {}) => {
   if (!id) return false
 
-  const cached = canvasDataCache.get(id) || { nodes: [], edges: [], viewport: { x: 100, y: 50, zoom: 0.8 } }
+  const cached = canvasDataCache.get(id)
+  const fallback = { nodes: [], edges: [], viewport: DEFAULT_VIEWPORT }
+  const base = cached || fallback
   const merged = {
-    nodes: canvasData.nodes ?? cached.nodes,
-    edges: canvasData.edges ?? cached.edges,
-    viewport: canvasData.viewport ?? cached.viewport
+    nodes: canvasData.nodes ?? base.nodes,
+    edges: canvasData.edges ?? base.edges,
+    viewport: canvasData.viewport ?? base.viewport
   }
+
+  if (!cached && !hydratedProjectIds.has(id) && isEmptyCanvas(merged)) {
+    return false
+  }
+
   canvasDataCache.set(id, merged)
 
   // 推断缩略图，写到 meta 列表里供首页显示（不会阻塞 snapshot）
@@ -198,6 +218,7 @@ export const updateProjectCanvas = async (id, canvasData = {}) => {
     nodes: merged.nodes,
     edges: merged.edges,
     viewport: merged.viewport,
+    ...(canvasData.confirmEmptySnapshot === true ? { confirmEmptySnapshot: true } : {}),
     ...(inferredThumb !== undefined ? { thumbnail: inferredThumb } : {})
   })
 
@@ -231,6 +252,7 @@ export const deleteProject = async (id) => {
     await request({ url: `/projects/${id}`, method: 'delete' })
     projects.value = projects.value.filter(p => p.id !== id)
     canvasDataCache.delete(id)
+    hydratedProjectIds.delete(id)
     pendingPayloads.delete(id)
     if (snapshotTimers.has(id)) {
       clearTimeout(snapshotTimers.get(id))

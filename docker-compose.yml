@@ -57,7 +57,7 @@ services:
       - ./web/data/videos:/data/videos
       # 画布生成图 / 参考图（与容器内 IMAGE_STORAGE_PATH 对齐）
       - canvas_images:/data/canvas-images
-      # GCS 凭证：在根 .env 设置 GCS_CREDENTIALS_FILE=./web/gcs-credentials.json（未使用 GCS 请删本 bind mount，并勿将真实 JSON 提交仓库）
+      # GCS 凭证：根 .env 必须设置 GCS_CREDENTIALS_FILE=宿主机上**已存在**的 JSON 路径（默认同下若文件不存在，Docker 会建空目录导致挂载失败）
       - ${GCS_CREDENTIALS_FILE:-./web/gcs-credentials.json}:/run/secrets/gcs-credentials.json:ro
     depends_on:
       db-init:
@@ -91,6 +91,7 @@ services:
     volumes:
       - ./web/data/videos:/data/videos
       - canvas_images:/data/canvas-images
+      # 与 web-app 相同：GCS_CREDENTIALS_FILE 必须指向宿主机已存在的 JSON 文件
       - ${GCS_CREDENTIALS_FILE:-./web/gcs-credentials.json}:/run/secrets/gcs-credentials.json:ro
     depends_on:
       db-init:

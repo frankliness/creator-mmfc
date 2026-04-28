@@ -467,12 +467,13 @@ export const loadProject = async (projectId) => {
 /**
  * Save current project | 保存当前项目
  */
-export const saveProject = () => {
+export const saveProject = ({ confirmEmptySnapshot = false } = {}) => {
   if (!currentProjectId.value) return Promise.resolve(false)
   return updateProjectCanvas(currentProjectId.value, {
     nodes: nodes.value,
     edges: edges.value,
-    viewport: canvasViewport.value
+    viewport: canvasViewport.value,
+    ...(confirmEmptySnapshot === true ? { confirmEmptySnapshot: true } : {})
   })
 }
 

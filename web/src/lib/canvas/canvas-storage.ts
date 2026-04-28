@@ -91,8 +91,19 @@ async function uploadCanvasImageToGCS(
   if (credPath && !path.isAbsolute(credPath) && !credPath.startsWith("-----BEGIN")) {
     process.env.GOOGLE_APPLICATION_CREDENTIALS = path.resolve(process.cwd(), credPath);
   }
-  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS || !fs.existsSync(process.env.GOOGLE_APPLICATION_CREDENTIALS)) {
-    throw new Error(`GOOGLE_APPLICATION_CREDENTIALS 无效: ${credPath || "(未设置)"}`);
+  const adc = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (!adc || !fs.existsSync(adc)) {
+    throw new Error(
+      `GOOGLE_APPLICATION_CREDENTIALS 无效或路径不存在: ${credPath || "(未设置)"}。` +
+        `Docker 下请在仓库根 .env 设置 GCS_CREDENTIALS_FILE 指向宿主机上真实存在的 JSON 文件；` +
+        `若宿主机缺文件，Compose 可能误建同名目录导致本错误。`
+    );
+  }
+  if (!fs.statSync(adc).isFile()) {
+    throw new Error(
+      `GOOGLE_APPLICATION_CREDENTIALS 不是文件（常为目录）: ${adc}。` +
+        `请删除宿主机误建的目录/文件后，将 GCS_CREDENTIALS_FILE 指到你的服务账号 JSON（例如 ./web/vertexai-*.json），再 docker compose up -d web-app web-worker。`
+    );
   }
 
   const storage = new Storage();
