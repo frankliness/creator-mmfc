@@ -140,7 +140,7 @@
  * Video node component | 视频节点组件
  * Displays and manages video content
  */
-import { ref, nextTick, watch, onMounted } from 'vue'
+import { ref, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { Handle, Position, useVueFlow } from '@vue-flow/core'
 import { NIcon, NSpin } from 'naive-ui'
 import { TrashOutline, ExpandOutline, VideocamOutline, CopyOutline, CloseCircleOutline, DownloadOutline, EyeOutline, CreateOutline } from '@vicons/ionicons5'
@@ -250,16 +250,29 @@ const handleSelect = (item) => {
 }
 
 // Handle file upload | 处理文件上传
+// A5：上传前先释放节点上一份 blob URL（如果有），杜绝累积持有完整文件字节
 const handleFileUpload = (event) => {
   const file = event.target.files[0]
   if (file) {
+    const oldUrl = props.data?.url
+    if (typeof oldUrl === 'string' && oldUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(oldUrl)
+    }
     const url = URL.createObjectURL(file)
-    updateNode(props.id, { 
+    updateNode(props.id, {
       url,
       updatedAt: Date.now()
     })
   }
 }
+
+// A5：组件卸载时释放当前 blob URL
+onUnmounted(() => {
+  const url = props.data?.url
+  if (typeof url === 'string' && url.startsWith('blob:')) {
+    URL.revokeObjectURL(url)
+  }
+})
 
 // Format duration | 格式化时长
 const formatDuration = (seconds) => {

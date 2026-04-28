@@ -95,10 +95,10 @@ import { ref, watch, nextTick, computed, onMounted } from 'vue'
 import { Handle, Position, useVueFlow } from '@vue-flow/core'
 import { NIcon, NSpin } from 'naive-ui'
 import { TrashOutline, ExpandOutline, CopyOutline, ImageOutline, VideocamOutline, ChatbubbleOutline, CreateOutline } from '@vicons/ionicons5'
-import { updateNode, removeNode, duplicateNode, addNode, addEdge, nodes } from '../../stores/canvas'
+import { updateNode, removeNode, duplicateNode, addNode, addEdge, nodes, currentProjectId } from '../../stores/canvas'
 import NodeHandleMenu from './NodeHandleMenu.vue'
 import MentionsPicker from '../MentionsPicker.vue'
-import { useChat } from '../../hooks'
+import { streamChatCompletions } from '../../api'
 import { useModelStore } from '../../stores/pinia'
 import { parseMentions } from '../../hooks/useNodeRef'
 import { DEFAULT_CHAT_MODEL, DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_SIZE } from '../../config/models'
@@ -115,11 +115,8 @@ const { updateNodeInternals } = useVueFlow()
 const modelStore = useModelStore()
 const isApiConfigured = computed(() => !!modelStore.currentApiKey)
 
-// Chat hook for polish | 润色用的 Chat hook
-const { send: sendChat } = useChat({
-  systemPrompt: '你是一个专业的AI绘画提示词专家。将用户输入的内容美化成高质量的生图提示词，包含风格、光线、構图、细节等要素。直接返回提示词，不要其他解释。',
-  model: DEFAULT_CHAT_MODEL
-})
+// Polish system prompt（常量字符串，不持有任何响应式 ref）
+const POLISH_SYSTEM_PROMPT = '你是一个专业的AI绘画提示词专家。将用户输入的内容美化成高质量的生图提示词，包含风格、光线、構图、细节等要素。直接返回提示词，不要其他解释。'
 
 // Local content state | 本地内容状态
 const showHandleMenu = ref(false)
@@ -632,15 +629,31 @@ const handlePolish = async () => {
   const originalContent = content.value
 
   try {
-    // Call chat API to polish the prompt | 调用 AI 润色提示词
-    const result = await sendChat(input, true)
-    
-    if (result) {
-      content.value = result
-      updateNode(props.id, { content: result })
+    const adaptedParams = modelStore.adaptRequest('chat', {
+      model: DEFAULT_CHAT_MODEL,
+      messages: [
+        { role: 'system', content: POLISH_SYSTEM_PROMPT },
+        { role: 'user', content: input }
+      ]
+    })
+
+    const abortController = new AbortController()
+    let fullResponse = ''
+    for await (const chunk of streamChatCompletions(
+      adaptedParams,
+      abortController.signal,
+      { projectId: currentProjectId.value }
+    )) {
+      fullResponse += chunk
+    }
+
+    if (fullResponse) {
+      content.value = fullResponse
+      updateNode(props.id, { content: fullResponse })
       window.$message?.success('提示词已润色')
     }
   } catch (err) {
+    if (err?.name === 'AbortError') return
     content.value = originalContent
     window.$message?.error(err.message || '润色失败')
   } finally {

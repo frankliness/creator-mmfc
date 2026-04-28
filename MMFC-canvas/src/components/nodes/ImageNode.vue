@@ -326,9 +326,10 @@ import { ref, nextTick, computed } from 'vue'
 import { Handle, Position, useVueFlow } from '@vue-flow/core'
 import { NIcon, NTooltip, NSwitch, NImagePreview, NModal, NButton } from 'naive-ui'
 import { TrashOutline, ExpandOutline, ImageOutline, CloseCircleOutline, CopyOutline, VideocamOutline, DownloadOutline, EyeOutline, BrushOutline, RefreshOutline, ColorWandOutline, SwapHorizontalOutline } from '@vicons/ionicons5'
-import { updateNode, removeNode, duplicateNode, addNode, addEdge, nodes } from '../../stores/canvas'
+import { updateNode, removeNode, duplicateNode, addNode, addEdge, nodes, currentProjectId } from '../../stores/canvas'
 import NodeHandleMenu from './NodeHandleMenu.vue'
 import { DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_SIZE } from '../../config/models'
+import { uploadAsset } from '../../api'
 
 const props = defineProps({
   id: String,
@@ -677,24 +678,51 @@ const fileToBase64 = (file) => {
 }
 
 // Handle file upload | 处理文件上传
+// B3：本地图片走 uploadAsset → store 仅保存 publicUrl（HTTP 短串），
+// 避免 data URL 驻留在 nodes/edges 与 snapshot 请求体里造成 OOM。
+// 413（超 12MB）不走 fallback，直接提示用户压缩后重试；
+// 其他网络错误仍回退 data URL 保证基本可用。
+const ASSET_MAX_MB = 12
 const handleFileUpload = async (event) => {
   const file = event.target.files[0]
-  if (file) {
+  if (!file) return
+  if (file.size > ASSET_MAX_MB * 1024 * 1024) {
+    window.$message?.error(`图片超过 ${ASSET_MAX_MB}MB，请压缩后重试`)
+    return
+  }
+  const projectId = currentProjectId.value
+  try {
+    if (!projectId) throw new Error('missing projectId')
+    const res = await uploadAsset(file, { projectId, sourceNodeId: props.id })
+    updateNode(props.id, {
+      url: res.url,
+      assetId: res.assetId,
+      mimeType: res.mimeType,
+      fileName: file.name,
+      fileType: file.type,
+      label: '参考图',
+      updatedAt: Date.now()
+    })
+  } catch (err) {
+    const is413 = err?.response?.status === 413 || /超过限制|too large|413/i.test(err?.message || '')
+    if (is413) {
+      window.$message?.error(`图片超过 ${ASSET_MAX_MB}MB，请压缩后重试`)
+      return
+    }
+    console.warn('[ImageNode] uploadAsset failed, fallback to data URL:', err)
     try {
-      // Convert to base64 | 转换为 base64
       const base64 = await fileToBase64(file)
-      // Store both display URL and base64 | 同时存储显示 URL 和 base64
       updateNode(props.id, {
-        url: base64,  // Use base64 as display URL | 使用 base64 作为显示 URL
-        base64: base64,  // Store base64 for API calls | 存储 base64 用于 API 调用
+        url: base64,
         fileName: file.name,
         fileType: file.type,
         label: '参考图',
         updatedAt: Date.now()
       })
-    } catch (err) {
-      console.error('File upload error:', err)
-      window.$message?.error('图片上传失败')
+      window.$message?.warning('图片已用本地内嵌方式加载，可能影响性能')
+    } catch (e) {
+      console.error('File upload error:', e)
+      window.$message?.error('图片上传失败' + (err?.message ? `：${err.message}` : ''))
     }
   }
 }
@@ -735,14 +763,41 @@ const handleUrlSubmit = () => {
 
 
 // Handle replace file upload | 处理替换文件上传
+// B3：同 handleFileUpload，413 不 fallback，其他错误仍回退 data URL。
 const handleReplaceFileUpload = async (event) => {
   const file = event.target.files[0]
-  if (file) {
+  if (!file) return
+  if (file.size > ASSET_MAX_MB * 1024 * 1024) {
+    window.$message?.error(`图片超过 ${ASSET_MAX_MB}MB，请压缩后重试`)
+    return
+  }
+  const projectId = currentProjectId.value
+  try {
+    if (!projectId) throw new Error('missing projectId')
+    const res = await uploadAsset(file, { projectId, sourceNodeId: props.id })
+    updateNode(props.id, {
+      url: res.url,
+      assetId: res.assetId,
+      mimeType: res.mimeType,
+      fileName: file.name,
+      fileType: file.type,
+      label: '参考图',
+      updatedAt: Date.now()
+    })
+    showReplaceModal.value = false
+    replaceUrlInput.value = ''
+    window.$message?.success('图片已替换')
+  } catch (err) {
+    const is413 = err?.response?.status === 413 || /超过限制|too large|413/i.test(err?.message || '')
+    if (is413) {
+      window.$message?.error(`图片超过 ${ASSET_MAX_MB}MB，请压缩后重试`)
+      return
+    }
+    console.warn('[ImageNode] uploadAsset failed (replace), fallback to data URL:', err)
     try {
       const base64 = await fileToBase64(file)
       updateNode(props.id, {
         url: base64,
-        base64: base64,
         fileName: file.name,
         fileType: file.type,
         label: '参考图',
@@ -750,10 +805,10 @@ const handleReplaceFileUpload = async (event) => {
       })
       showReplaceModal.value = false
       replaceUrlInput.value = ''
-      window.$message?.success('图片已替换')
-    } catch (err) {
-      console.error('File upload error:', err)
-      window.$message?.error('图片上传失败')
+      window.$message?.warning('图片已用本地内嵌方式替换，可能影响性能')
+    } catch (e) {
+      console.error('File upload error:', e)
+      window.$message?.error('图片替换失败' + (err?.message ? `：${err.message}` : ''))
     }
   }
 }

@@ -754,12 +754,24 @@ watch(() => props.data?.model, (newModel) => {
   }
 })
 
-// 修复 Vue Flow visibility: hidden 问题
-watch(() => props.data, () => {
-  nextTick(() => {
-    updateNodeInternals(props.id)
-  })
-}, { deep: true })
+// B2：仅监听真正影响节点尺寸/handle 位置的字段，避免对 props.data 全树 deep watch
+// 触发的"全图雪崩 nextTick + updateNodeInternals"。其它纯展示字段（如 selected）变化
+// 不需要重算节点 internals。
+watch(
+  () => [
+    props.data?.model,
+    props.data?.size,
+    props.data?.quality,
+    props.data?.loading,
+    props.data?.error,
+    props.data?.label
+  ],
+  () => {
+    nextTick(() => {
+      updateNodeInternals(props.id)
+    })
+  }
+)
 
 // Watch for auto-execute flag | 监听自动执行标志
 watch(

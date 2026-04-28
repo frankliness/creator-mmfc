@@ -31,6 +31,12 @@ let saveTimeout = null
 const history = ref([])
 const historyIndex = ref(-1)
 const MAX_HISTORY = 50
+// A3：剥重字段后的 history.value 总字节软上限。超出按 FIFO 丢最旧。
+// 30MB 实测能容纳几十步带本地图的中等画布编辑，再大的图直接走 MAX_HISTORY 数量裁剪
+const MAX_HISTORY_BYTES = 30 * 1024 * 1024
+// 与 history.value 等长，记录每条快照的字节数，便于裁剪时同步扣减 historyBytes
+const historySizes = []
+let historyBytes = 0
 let isRestoring = false
 
 // Position change threshold for history | 位置变化阈值
@@ -39,6 +45,29 @@ const POSITION_THRESHOLD = 10
 // Batch operation tracking | 批量操作跟踪
 let isBatchOperation = false
 let batchStartState = null
+
+// B1：mutation 计数器。所有写出口集中递增，下方 watch(mutationVersion) 触发自动保存，
+// 取代之前对 [nodes, edges] 的 deep watch 全树遍历。
+const mutationVersion = ref(0)
+const bumpMutation = () => { mutationVersion.value++ }
+
+// A3：序列化 nodes 时剥离重字段，避免 base64/maskData 被 history 多次深拷贝放大
+const STRIPPED_NODE_DATA_KEYS = ['base64', 'maskData']
+
+const stripHeavyFieldsForHistory = (nodesArr) => {
+  if (!Array.isArray(nodesArr)) return nodesArr
+  return nodesArr.map(n => {
+    if (!n || !n.data) return n
+    let needsCopy = false
+    for (const k of STRIPPED_NODE_DATA_KEYS) {
+      if (n.data[k] !== undefined) { needsCopy = true; break }
+    }
+    if (!needsCopy) return n
+    const cleanedData = { ...n.data }
+    for (const k of STRIPPED_NODE_DATA_KEYS) delete cleanedData[k]
+    return { ...n, data: cleanedData }
+  })
+}
 
 /**
  * Save current state to history | 保存当前状态到历史
@@ -50,25 +79,38 @@ const saveToHistory = (force = false) => {
   // If in batch operation and not forced, don't save | 如果在批量操作中且未强制保存，则不保存
   if (isBatchOperation && !force) return
 
-  const state = {
-    nodes: JSON.parse(JSON.stringify(nodes.value)),
-    edges: JSON.parse(JSON.stringify(edges.value))
-  }
+  // A3：剥重字段后再序列化；用 JSON 字符串长度做字节预算近似
+  const serialized = JSON.stringify({
+    nodes: stripHeavyFieldsForHistory(nodes.value),
+    edges: edges.value
+  })
+  const state = JSON.parse(serialized)
+  const stateBytes = serialized.length * 2 // UTF-16 近似
 
-  // Remove future history if we're not at the end | 如果不在末尾，删除未来历史
+  // 裁剪未来分支
   if (historyIndex.value < history.value.length - 1) {
+    const removed = history.value.length - 1 - historyIndex.value
+    for (let i = 0; i < removed; i++) {
+      historyBytes -= historySizes.pop() || 0
+    }
     history.value = history.value.slice(0, historyIndex.value + 1)
   }
 
-  // Add new state | 添加新状态
   history.value.push(state)
+  historySizes.push(stateBytes)
+  historyBytes += stateBytes
 
-  // Limit history size | 限制历史大小
-  if (history.value.length > MAX_HISTORY) {
+  // 先按条目数硬裁剪
+  while (history.value.length > MAX_HISTORY) {
     history.value.shift()
-  } else {
-    historyIndex.value++
+    historyBytes -= historySizes.shift() || 0
   }
+  // 再按字节软上限裁剪（A3：保留至少 1 条，否则 undo/redo 边界会出错）
+  while (historyBytes > MAX_HISTORY_BYTES && history.value.length > 1) {
+    history.value.shift()
+    historyBytes -= historySizes.shift() || 0
+  }
+  historyIndex.value = history.value.length - 1
 }
 
 /**
@@ -77,8 +119,9 @@ const saveToHistory = (force = false) => {
  */
 export const startBatchOperation = () => {
   isBatchOperation = true
+  // A3：与 saveToHistory 保持一致，这里也剥重字段后再深拷贝，避免 batchStartState 持有 base64
   batchStartState = {
-    nodes: JSON.parse(JSON.stringify(nodes.value)),
+    nodes: JSON.parse(JSON.stringify(stripHeavyFieldsForHistory(nodes.value))),
     edges: JSON.parse(JSON.stringify(edges.value))
   }
 }
@@ -182,6 +225,7 @@ export const addNode = (type, position = { x: 100, y: 100 }, data = {}) => {
   }
   nodes.value = [...nodes.value, newNode]
   saveToHistory() // Save after adding node | 添加节点后保存
+  bumpMutation()
   return id
 }
 
@@ -225,7 +269,7 @@ export const addNodes = (nodeSpecs, autoBatch = true) => {
   if (autoBatch) {
     endBatchOperation()
   }
-
+  bumpMutation()
   return ids
 }
 
@@ -286,9 +330,10 @@ const getDefaultNodeData = (type) => {
 
 // Update node data | 更新节点数据
 export const updateNode = (id, data) => {
-  nodes.value = nodes.value.map(node => 
+  nodes.value = nodes.value.map(node =>
     node.id === id ? { ...node, data: { ...node.data, ...data } } : node
   )
+  bumpMutation()
 }
 
 // Remove node | 删除节点
@@ -296,6 +341,7 @@ export const removeNode = (id) => {
   nodes.value = nodes.value.filter(node => node.id !== id)
   edges.value = edges.value.filter(edge => edge.source !== id && edge.target !== id)
   saveToHistory() // Save after removing node | 删除节点后保存
+  bumpMutation()
 }
 
 // Duplicate node | 复制节点
@@ -320,6 +366,7 @@ export const duplicateNode = (id) => {
   }
   nodes.value = [...nodes.value, newNode]
   saveToHistory() // Save after duplicating node | 复制节点后保存
+  bumpMutation()
   return newId
 }
 
@@ -331,6 +378,7 @@ export const addEdge = (params) => {
   }
   edges.value = [...edges.value, newEdge]
   saveToHistory() // Save after adding edge | 添加连线后保存
+  bumpMutation()
 }
 
 /**
@@ -363,22 +411,24 @@ export const addEdges = (edgeSpecs, autoBatch = true) => {
   if (autoBatch) {
     endBatchOperation()
   }
-
+  bumpMutation()
   return ids
 }
 
 // Update edge data | 更新边数据
 export const updateEdge = (id, data) => {
-  edges.value = edges.value.map(edge => 
+  edges.value = edges.value.map(edge =>
     edge.id === id ? { ...edge, data: { ...edge.data, ...data } } : edge
   )
   saveToHistory() // Save after updating edge | 更新连线后保存
+  bumpMutation()
 }
 
 // Remove edge | 删除边
 export const removeEdge = (id) => {
   edges.value = edges.value.filter(edge => edge.id !== id)
   saveToHistory() // Save after removing edge | 删除连线后保存
+  bumpMutation()
 }
 
 // Clear canvas | 清空画布
@@ -386,6 +436,7 @@ export const clearCanvas = () => {
   nodes.value = []
   edges.value = []
   nodeId = 0
+  bumpMutation()
 }
 
 // Initialize with sample data | 使用示例数据初始化
@@ -451,12 +502,20 @@ export const loadProject = async (projectId) => {
   }
   
   // Initialize history with current state | 用当前状态初始化历史
-  history.value = [{
-    nodes: JSON.parse(JSON.stringify(nodes.value)),
-    edges: JSON.parse(JSON.stringify(edges.value))
-  }]
+  // A3：与 saveToHistory 一致，剥重字段后入栈，并同步 historyBytes/Sizes
+  const initSerialized = JSON.stringify({
+    nodes: stripHeavyFieldsForHistory(nodes.value),
+    edges: edges.value
+  })
+  history.value = [JSON.parse(initSerialized)]
+  historySizes.length = 0
+  historySizes.push(initSerialized.length * 2)
+  historyBytes = initSerialized.length * 2
   historyIndex.value = 0
-  
+
+  // B1：加载项目后递增一次，让 watch(mutationVersion) 关注到（自动保存仍受 autoSaveEnabled 控制）
+  bumpMutation()
+
   // Enable auto-save after loading | 加载后启用自动保存
   setTimeout(() => {
     autoSaveEnabled = true
@@ -535,6 +594,8 @@ const restoreState = (state) => {
   isRestoring = true
   nodes.value = JSON.parse(JSON.stringify(state.nodes))
   edges.value = JSON.parse(JSON.stringify(state.edges))
+  // B1：撤销/重做也走 mutationVersion 触发自动保存（与原 deep watch 行为对齐）
+  bumpMutation()
   setTimeout(() => {
     isRestoring = false
   }, 100)
@@ -558,7 +619,8 @@ export const manualSaveHistory = () => {
   saveToHistory()
 }
 
-// Watch for changes and auto-save (only save to project, not history) | 监听变化并自动保存（仅保存项目，不保存历史）
-watch([nodes, edges], () => {
+// B1：监听集中递增的 mutationVersion 触发自动保存，
+// 替代之前对 [nodes, edges] 的 { deep: true } 全树遍历（性能 + 内存峰值收益）。
+watch(mutationVersion, () => {
   debouncedSave()
-}, { deep: true })
+})

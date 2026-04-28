@@ -143,10 +143,10 @@ import { ref, watch, computed, nextTick, onMounted } from 'vue'
 import { Handle, Position, useVueFlow } from '@vue-flow/core'
 import { NIcon, NSpin, NSelect } from 'naive-ui'
 import { TrashOutline, CopyOutline, ChatbubbleOutline, SparklesOutline, ListOutline, ImageOutline, VideocamOutline, DocumentTextOutline } from '@vicons/ionicons5'
-import { updateNode, removeNode, duplicateNode, addNode, addEdge, addNodes, addEdges, nodes, edges, startBatchOperation, endBatchOperation } from '../../stores/canvas'
+import { updateNode, removeNode, duplicateNode, addNode, addEdge, addNodes, addEdges, nodes, edges, startBatchOperation, endBatchOperation, currentProjectId } from '../../stores/canvas'
 import NodeHandleMenu from './NodeHandleMenu.vue'
 import MentionsPicker from '../MentionsPicker.vue'
-import { useChat } from '../../hooks'
+import { streamChatCompletions } from '../../api'
 import { useModelStore } from '../../stores/pinia'
 import { parseMentions, removeMention as removeMentionUtil } from '../../hooks/useNodeRef'
 import { DEFAULT_CHAT_MODEL, DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_SIZE } from '../../config/models'
@@ -692,14 +692,6 @@ const formatOptions = [
   { label: 'Markdown', value: 'markdown' }
 ]
 
-// Chat hook | Chat hook
-const chatHook = computed(() => {
-  return useChat({
-    systemPrompt: systemPrompt.value,
-    model: model.value
-  })
-})
-
 // 防抖定时器
 let updateConfigTimer = null
 
@@ -877,33 +869,52 @@ const handleGenerate = async () => {
   isGenerating.value = true
 
   try {
-    // 解析 systemPrompt 并获取引用的内容
     const resolvedSystemPrompt = resolveSystemPrompt()
     const referencedContent = getReferencedContent()
     const userMessage = getUserMessage(input, referencedContent)
     const resolvedUserInput = resolveUserInput(userMessage)
 
-    const { send } = useChat({
-      systemPrompt: resolvedSystemPrompt,
-      model: model.value
-    })
-
     const fallbackPrompt = resolvedUserInput.images.length > 0
       ? '请分析这张图片'
       : '请根据以上信息生成内容'
 
-    const result = await send(
-      resolvedUserInput.text || fallbackPrompt,
-      true,
-      { images: resolvedUserInput.images }
-    )
+    const userText = resolvedUserInput.text || fallbackPrompt
+    const userContent = resolvedUserInput.images.length > 0
+      ? [
+          { type: 'text', text: userText },
+          ...resolvedUserInput.images.map(img => ({
+            type: 'image_url',
+            image_url: { url: img.url || img }
+          }))
+        ]
+      : userText
 
+    const adaptedParams = modelStore.adaptRequest('chat', {
+      model: model.value,
+      messages: [
+        ...(resolvedSystemPrompt ? [{ role: 'system', content: resolvedSystemPrompt }] : []),
+        { role: 'user', content: userContent }
+      ]
+    })
+
+    const abortController = new AbortController()
+    let fullResponse = ''
+    for await (const chunk of streamChatCompletions(
+      adaptedParams,
+      abortController.signal,
+      { projectId: currentProjectId.value }
+    )) {
+      fullResponse += chunk
+    }
+
+    const result = fullResponse
     if (result) {
       outputContent.value = result
       updateNode(props.id, { outputContent: result, executed: true })
       window.$message?.success('生成完成')
     }
   } catch (err) {
+    if (err?.name === 'AbortError') return
     updateNode(props.id, { error: err.message || '生成失败' })
     window.$message?.error(err.message || '生成失败')
   } finally {

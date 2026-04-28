@@ -1,6 +1,6 @@
 # Creator MMFC
 
-**版本：1.1.1**
+**版本：1.1.2**
 
 面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，可选 **GCS** 做对象存储。
 
@@ -23,17 +23,18 @@
 - [MMFC-canvas 画布说明](MMFC-canvas/README.md)
 - [系统架构说明](ARCHITECTURE.md)（模块边界、数据流、部署与模型）
 
-### 版本 1.1.1 更新摘要
+### 版本 1.1.2 更新摘要
 
-相对 **1.1.0** 的主要变更：
+相对 **1.1.1** 的主要变更（**MMFC Studio Canvas** 为主）：
 
-- **画布数据模型**：`CanvasNode` / `CanvasEdge` 使用复合主键 `(projectId, id)`，并附带 Prisma 迁移 `web/prisma/migrations/20260424000000_canvas_node_edge_compound_pk`，避免跨项目节点/边 ID 冲突。
-- **画布快照 API**（`PUT /api/canvas/projects/[id]/snapshot`）：加强请求体验证（含重复节点 ID 检测）；空画布覆写需显式 `confirmEmptySnapshot: true`，否则返回 **409** 与 `empty_snapshot_requires_confirm`，防止误清空。
-- **MMFC Studio Canvas**：项目画布缓存与水合状态（`hydratedProjectIds`）、默认视口常量、对空快照 409 的静默处理，与后端语义对齐。
-- **用户端与管理端**：分镜生成路由、Gemini 调用与 `canvas-storage`、管理端项目路由及 Docker / `.env.docker.example` 等配套调整。
-- **文档**：新增根目录 [ARCHITECTURE.md](ARCHITECTURE.md)。
+- **性能与内存**：画布 `canvas` store 用 `mutationVersion` 触发自动保存，替代对 `nodes` / `edges` 的 deep watch；撤销历史在入栈前剥离 `base64`、`maskData` 等重字段，并增加约 30MB 的软字节上限与 FIFO 裁剪，降低大图编辑时的内存峰值与卡顿。
+- **参考图上传**：图片节点本地上传优先走 `uploadAsset`，节点内保存 HTTP `url`（及 `assetId` 等），避免整图 data URL 长期驻留在快照与请求体中；单文件约 12MB 上限，**413** 明确提示压缩重试，其它错误仍可回退为内嵌 data URL（并提示可能影响性能）。
+- **LLM / 文本节点**：`LLMConfigNode`、`TextNode` 的流式对话与「润色」改为直接调用 `streamChatCompletions`（`api` 层），与项目上下文、模型适配逻辑对齐；`TextNode` 润色使用常量 system 文案，避免多余响应式闭包。
+- **Vue Flow 节点**：`ImageConfigNode`、`VideoConfigNode` 将原先对 `props.data` 的 deep watch 收窄为监听影响尺寸与 handle 的字段，减少全图 `updateNodeInternals` 连锁触发。
+- **视频节点**：本地上传替换前 `URL.revokeObjectURL` 释放旧 blob，卸载组件时释放当前 blob，避免 blob URL 与文件字节累积。
+- **体验与可观测**：新增 `MessageBridge` 将 Naive UI `useMessage` 挂到 `window.$message`，避免各节点里可选链静默无提示；开发环境可选 `memDebug` 周期性输出堆占用（生产为 no-op）。
 
-升级已有数据库时，请在部署流程中执行 `prisma migrate deploy`（或按你方 CI 等价步骤）应用上述迁移。
+更早的 **1.1.1** 相对 **1.1.0** 的变更（数据模型、快照 API、ARCHITECTURE 等）仍见上文仓库结构与 [ARCHITECTURE.md](ARCHITECTURE.md)；升级已有数据库时请继续执行 `prisma migrate deploy`（或 CI 等价步骤）应用 1.1.1 起包含的迁移。
 
 ## 环境要求
 

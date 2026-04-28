@@ -501,13 +501,22 @@ watch(() => props.data?.model, (newModel) => {
   }
 })
 
-// 修复 Vue Flow visibility: hidden 问题
-// 当节点数据变化时，强制更新内部状态
-watch(() => props.data, () => {
-  nextTick(() => {
-    updateNodeInternals(props.id)
-  })
-}, { deep: true })
+// B2：仅监听真正影响节点尺寸/handle 位置的字段，避免对 props.data 全树 deep watch
+watch(
+  () => [
+    props.data?.model,
+    props.data?.ratio,
+    props.data?.dur,
+    props.data?.loading,
+    props.data?.error,
+    props.data?.label
+  ],
+  () => {
+    nextTick(() => {
+      updateNodeInternals(props.id)
+    })
+  }
+)
 
 // Watch for auto-execute flag | 监听自动执行标志
 watch(
