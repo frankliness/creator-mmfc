@@ -15,12 +15,13 @@ model User {
   status         UserStatus      @default(ACTIVE)
   quota          Json?
   remark         String?         @db.Text
-  projects       Project[]
-  apiConfigs     UserApiConfig[]
-  tokenUsages    TokenUsageLog[]
-  actionLogs     UserActionLog[]
-  canvasProjects CanvasProject[]
-  createdAt      DateTime        @default(now())
+  projects         Project[]
+  apiConfigs       UserApiConfig[]
+  tokenUsages      TokenUsageLog[]
+  actionLogs       UserActionLog[]
+  canvasProjects   CanvasProject[]
+  canvasImageTasks CanvasImageTask[]
+  createdAt        DateTime        @default(now())
 }
 
 enum UserStatus {
@@ -99,22 +100,96 @@ model GenerationTask {
 }
 
 model UserApiConfig {
-  id        String           @id @default(uuid())
-  userId    String
-  user      User             @relation(fields: [userId], references: [id])
-  provider  String
-  name      String
-  endpoint  String
-  apiKey    String
-  model     String?
-  isDefault Boolean          @default(false)
-  isActive  Boolean          @default(true)
-  tasks     GenerationTask[]
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
+  id           String              @id @default(uuid())
+  userId       String
+  user         User                @relation(fields: [userId], references: [id])
+  provider     String
+  name         String
+  endpoint     String
+  apiKey       String
+  model        String?
+  /** 用途分类：video / chat / storyboard / canvas_image / canvas_image_edit。video 为旧默认（Seedance） */
+  callType     String              @default("video")
+  /** Azure OpenAI 专用：部署名（与 model 解耦） */
+  deployment   String?
+  /** Azure OpenAI 专用：api-version */
+  apiVersion   String?
+  /** 可选：指向共享 ProviderCredential。设置后 endpoint/apiKey 仍保留作为快照，但运行时优先用 credentialId 解出的最新凭据。 */
+  credentialId String?
+  credential   ProviderCredential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  isDefault    Boolean             @default(false)
+  isActive     Boolean             @default(true)
+  tasks        GenerationTask[]
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
 
   @@index([userId])
   @@index([userId, provider])
+  @@index([userId, callType, isDefault])
+  @@index([credentialId])
+}
+
+/// admin 维护的共享凭据。每个 provider 类型可有多条；主用凭据按 provider + purposes + modelKeys 匹配。
+model ProviderCredential {
+  id             String          @id @default(uuid())
+  /** 'openai' | 'azure_openai' | 'google' | 'custom' */
+  provider       String
+  /** 人类标签，如 "OpenAI 主号" / "Azure 测试" */
+  name           String
+  baseUrl        String
+  /** AES 加密 */
+  apiKey         String
+  /** Azure OpenAI 专用：deployment 名 */
+  deployment     String?
+  /** Azure OpenAI 专用：api-version */
+  apiVersion     String?
+  /** 是否启用：禁用后凭据池查询会跳过 */
+  isActive       Boolean         @default(true)
+  /** 凭据适用业务类型：chat / storyboard / canvas_image / canvas_image_edit；为空兼容旧数据，视为全部适用 */
+  purposes       Json?
+  /** 凭据适用模型 key 列表；为空表示该业务类型下所有模型 */
+  modelKeys      Json?
+  /** 同 provider + purposes + modelKeys 范围内的"主用"凭据 */
+  isPrimary      Boolean         @default(false)
+  sortOrder      Int             @default(100)
+  remark         String?
+  userApiConfigs UserApiConfig[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([provider, isActive])
+  @@index([provider, isPrimary])
+}
+
+model ModelRegistry {
+  id            String   @id @default(uuid())
+  /** 调用接口时 body.model 的值，如 "gpt-4o" / "gemini-3-pro-image-preview" */
+  modelKey      String
+  /** 前端 dropdown 显示的人类友好名 */
+  label         String
+  /** 用途：chat / canvas_image / canvas_image_edit / storyboard */
+  category      String
+  /** 适用 provider 类型数组，如 ["openai","azure_openai"] */
+  providers     Json
+  /** 能力字段 JSON：{ imageGen, imageEdit, vision, tools, jsonSchema, jsonMode, streaming } 等布尔 */
+  capabilities  Json
+  /** 图片模型可选 size 列表（aspect ratio key），如 ["1:1","16:9","9:16"] */
+  sizes         Json?
+  /** 图片模型可选 quality 列表，如 [{label:"HD",key:"hd"},...] */
+  qualities     Json?
+  /** 默认参数 { size, quality } */
+  defaultParams Json?
+  /** 鼠标悬停提示 */
+  tips          String?  @db.Text
+  /** 是否启用：禁用后画布前端不再显示 */
+  isActive      Boolean  @default(true)
+  /** 排序权重，小的在前 */
+  sortOrder     Int      @default(100)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([modelKey, category])
+  @@index([category, isActive, sortOrder])
 }
 
 model GlobalConfig {
@@ -174,17 +249,21 @@ model UserActionLog {
 }
 
 model PromptTemplate {
-  id          String         @id @default(uuid())
-  name        String
-  slug        String         @unique
-  category    PromptCategory
-  description String?        @db.Text
-  content     String         @db.Text
-  version     Int            @default(1)
-  isActive    Boolean        @default(true)
-  versions    PromptVersion[]
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id                  String          @id @default(uuid())
+  name                String
+  slug                String
+  category            PromptCategory
+  description         String?         @db.Text
+  content             String          @db.Text
+  /** JSON 数组，列出该条目适用于哪些 provider（如 ["openai","azure_openai"]）；null = 通用，所有 provider 都生效 */
+  applicableProviders Json?
+  version             Int             @default(1)
+  isActive            Boolean         @default(true)
+  versions            PromptVersion[]
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@index([slug, isActive])
 }
 
 enum PromptCategory {
@@ -244,19 +323,20 @@ enum TaskStatus {
 // ──────────────────────────────────────────────
 
 model CanvasProject {
-  id        String         @id @default(uuid())
-  userId    String
-  user      User           @relation(fields: [userId], references: [id])
-  name      String
-  thumbnail String?        @db.Text
-  viewport  Json           @default("{\"x\":100,\"y\":50,\"zoom\":0.8}")
-  status    CanvasStatus   @default(ACTIVE)
-  nodes     CanvasNode[]
-  edges     CanvasEdge[]
-  assets    CanvasAsset[]
-  aiCalls   CanvasAiCall[]
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
+  id         String            @id @default(uuid())
+  userId     String
+  user       User              @relation(fields: [userId], references: [id])
+  name       String
+  thumbnail  String?           @db.Text
+  viewport   Json              @default("{\"x\":100,\"y\":50,\"zoom\":0.8}")
+  status     CanvasStatus      @default(ACTIVE)
+  nodes      CanvasNode[]
+  edges      CanvasEdge[]
+  assets     CanvasAsset[]
+  aiCalls    CanvasAiCall[]
+  imageTasks CanvasImageTask[]
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
 
   @@index([userId])
   @@index([userId, updatedAt])
@@ -340,4 +420,50 @@ model CanvasAiCall {
 
   @@index([userId, createdAt])
   @@index([projectId])
+}
+
+/// 画布图片生成任务（v1.4.0 起异步化）。
+/// 状态机：PENDING → RUNNING → SUCCEEDED / FAILED。
+/// 长 fetch（gpt-image-1 / 慢 Gemini）在 Worker 中执行，前端通过轮询恢复结果。
+model CanvasImageTask {
+  id                 String        @id @default(uuid())
+  userId             String
+  user               User          @relation(fields: [userId], references: [id])
+  projectId          String
+  project            CanvasProject @relation(fields: [projectId], references: [id])
+  /** 触发该任务的画布节点（可选，用于"resume on refresh"） */
+  sourceNodeId       String?
+  /** PENDING / RUNNING / SUCCEEDED / FAILED */
+  status             String        @default("PENDING")
+  /** 调用用途：canvas_image / canvas_image_edit */
+  callType           String
+  /** 输入：模型 + 凭据偏好 + 提示词 */
+  model              String
+  credentialId       String?
+  prompt             String        @db.Text
+  size               String?
+  quality            String?
+  /** 是否图生图（参考图非空） */
+  isEdit             Boolean       @default(false)
+  /** 参考图的输入快照（asset paths / data URLs / http URLs）；worker 取出后再 normalize 成 base64 调用 provider */
+  refImagesSnapshot  Json?
+  /** 实际命中的 provider（worker 解析凭据后回填，便于审计/重试时定位） */
+  upstreamProvider   String?
+  /** 结果：CanvasAsset.id 数组（成功时） */
+  resultAssetIds     Json?
+  revisedPrompt      String?       @db.Text
+  /** USD 估算（与 CanvasAiCall.costEstimate 一致；保留一份方便任务页直接看） */
+  costEstimate       Decimal?      @db.Decimal(10, 6)
+  durationMs         Int?
+  error              String?       @db.Text
+  /** 重试计数（暂未启用，预留） */
+  attempts           Int           @default(0)
+  startedAt          DateTime?
+  finishedAt         DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@index([userId, status])
+  @@index([projectId, status, createdAt])
+  @@index([status, createdAt])
 }

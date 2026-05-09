@@ -14,6 +14,7 @@ import {
   DEFAULT_VIDEO_MODEL
 } from '@/config/models'
 import { PROVIDERS, getProviderList, getDefaultProvider, getProviderConfig, getDefaultBaseUrl } from '@/config/providers'
+import { fetchCanvasConfig } from '@/api/config'
 
 // 存储键名
 const STORAGE_KEYS = {
@@ -167,6 +168,120 @@ export const useModelStore = defineStore('model', () => {
   const apiKeysByProvider = ref(getStoredJson(STORAGE_KEYS.API_KEYS_BY_PROVIDER, {}))
   const baseUrlsByProvider = ref(getStoredJson(STORAGE_KEYS.BASE_URLS_BY_PROVIDER, {}))
 
+  // ============ Server Config 同步 ============
+  // Provider/默认模型/能力快照/ModelRegistry 来自后端 /api/canvas/config。
+  // 启动时调用 initFromServer 拉一次：
+  //   1. 把 currentProvider 切到后端实际生效的 provider
+  //   2. 用 ModelRegistry 替换硬编码 IMAGE_MODELS / CHAT_MODELS（server 列表为准；admin 启用一个就多一个）
+  const serverConfig = ref({
+    chat: { provider: null, defaultModel: null },
+    image: { provider: null, defaultModel: null },
+    imageEdit: { provider: null, defaultModel: null },
+    storyboard: { provider: null, defaultModel: null },
+  })
+  const serverCapabilities = ref({})
+  // 来自 ModelRegistry，已转换成 models.js 的形态（field 名 provider 而非 providers）
+  const serverChatModels = ref([])
+  const serverImageModels = ref([])
+  const serverImageEditModels = ref([])
+  const serverStoryboardModels = ref([])
+  // v1.3.0：admin 维护的共享凭据池（无 apiKey；供前端齿轮选凭据用）
+  const serverCredentials = ref([])
+  // v1.3.0：每用途的默认 modelKey
+  const serverDefaults = ref({
+    chat: { modelKey: null },
+    canvas_image: { modelKey: null },
+    canvas_image_edit: { modelKey: null },
+    storyboard: { modelKey: null },
+  })
+  const serverInitialized = ref(false)
+
+  const transformRegistryEntry = (m) => {
+    if (!m) return null
+    const cap = m.capabilities || {}
+    return {
+      key: m.key,
+      label: m.label,
+      provider: Array.isArray(m.providers) ? m.providers : [],
+      sizes: Array.isArray(m.sizes) ? m.sizes : undefined,
+      qualities: Array.isArray(m.qualities) ? m.qualities : undefined,
+      qualityLabel: cap.imageGen || cap.imageEdit ? '质量' : undefined,
+      defaultParams: m.defaultParams || undefined,
+      tips: m.tips || undefined,
+      capabilities: { imageGen: !!cap.imageGen, imageEdit: !!cap.imageEdit, ...cap },
+    }
+  }
+
+  const initFromServer = async () => {
+    try {
+      const cfg = await fetchCanvasConfig()
+      if (!cfg) return false
+
+      serverConfig.value = {
+        chat: cfg.chat || { provider: null, defaultModel: null },
+        image: cfg.image || { provider: null, defaultModel: null },
+        imageEdit: cfg.imageEdit || { provider: null, defaultModel: null },
+        storyboard: cfg.storyboard || { provider: null, defaultModel: null },
+      }
+      serverCapabilities.value = cfg.capabilities || {}
+
+      // ModelRegistry → 各 category 的可用模型
+      const reg = cfg.models || {}
+      serverChatModels.value = (reg.chat || []).map(transformRegistryEntry).filter(Boolean)
+      serverImageModels.value = (reg.canvas_image || []).map(transformRegistryEntry).filter(Boolean)
+      serverImageEditModels.value = (reg.canvas_image_edit || []).map(transformRegistryEntry).filter(Boolean)
+      serverStoryboardModels.value = (reg.storyboard || []).map(transformRegistryEntry).filter(Boolean)
+
+      // v1.3.0：凭据池 + 用途默认模型
+      serverCredentials.value = Array.isArray(cfg.credentials) ? cfg.credentials : []
+      if (cfg.defaults && typeof cfg.defaults === 'object') {
+        serverDefaults.value = {
+          chat: cfg.defaults.chat || { modelKey: null },
+          canvas_image: cfg.defaults.canvas_image || { modelKey: null },
+          canvas_image_edit: cfg.defaults.canvas_image_edit || { modelKey: null },
+          storyboard: cfg.defaults.storyboard || { modelKey: null },
+        }
+      }
+
+      // currentProvider 在 v1.3.0 中已不再决定调用路径（凭据由模型 providers 自动匹配）
+      // 但仍保留作为前端"主推 provider 风格"的偏好（影响 dropdown 默认排序等）。
+      const targetProvider =
+        cfg.image?.provider || cfg.chat?.provider || getDefaultProvider()
+      if (PROVIDERS[targetProvider] && targetProvider !== currentProvider.value) {
+        currentProvider.value = targetProvider
+        setStored(STORAGE_KEYS.PROVIDER, targetProvider)
+      }
+
+      // 默认模型：v1.3.0 优先用 defaults.${purpose}.modelKey；fallback 到 chat/image.defaultModel
+      const defaultImage = serverDefaults.value.canvas_image?.modelKey || cfg.image?.defaultModel
+      const defaultChat = serverDefaults.value.chat?.modelKey || cfg.chat?.defaultModel
+      if (defaultImage && !serverImageModels.value.some(m => m.key === selectedImageModel.value)) {
+        selectedImageModel.value = defaultImage
+      }
+      if (defaultChat && !serverChatModels.value.some(m => m.key === selectedChatModel.value)) {
+        selectedChatModel.value = defaultChat
+      }
+
+      serverInitialized.value = true
+      return true
+    } catch (err) {
+      console.warn('[modelStore] initFromServer failed:', err)
+      return false
+    }
+  }
+
+  /** 查询某个模型的能力（来自 server capabilities 快照） */
+  const getServerCapabilities = (modelKey) => serverCapabilities.value[modelKey] || null
+
+  /** 是否支持图生图（图生图节点用此过滤模型选项） */
+  const supportsImageEdit = (modelKey) => {
+    const cap = serverCapabilities.value[modelKey]
+    if (cap) return !!cap.supportsImageEdit
+    // server 还没初始化时回退到本地 IMAGE_MODELS 的 capabilities 字段
+    const local = IMAGE_MODELS.find(m => m.key === modelKey)
+    return !!local?.capabilities?.imageEdit
+  }
+
   // 集成版：API Key 由 Creator MMFC 主站后端通过 NextAuth 会话注入，
   // 前端永远视为"已就绪"。currentApiKey 仅用于旧 UI 的 isConfigured 判断，
   // 不会被任何请求实际使用（Authorization 已不再注入）。
@@ -192,14 +307,21 @@ export const useModelStore = defineStore('model', () => {
 
   // ============ Computed: All Models (built-in + custom + by provider) ============
 
+  // server 注册的模型清单优先；server 还没初始化时用代码内置 CHAT_MODELS / IMAGE_MODELS 兜底
+  const baseChatModels = computed(() =>
+    serverChatModels.value.length > 0 ? serverChatModels.value : CHAT_MODELS
+  )
+  const baseImageModels = computed(() =>
+    serverImageModels.value.length > 0 ? serverImageModels.value : IMAGE_MODELS
+  )
+
   const allChatModels = computed(() => [
-    ...CHAT_MODELS.map(m => ({ ...m, isCustom: false })),
+    ...baseChatModels.value.map(m => ({ ...m, isCustom: false })),
     ...customChatModels.value.map(m => ({
       label: m.label || m.key,
       key: m.key,
       isCustom: true
     })),
-    // 添加当前渠道的自定义模型
     ...(customChatModelsByProvider.value[currentProvider.value] || []).map(m => ({
       label: m.label || m.key,
       key: m.key,
@@ -209,7 +331,7 @@ export const useModelStore = defineStore('model', () => {
   ])
 
   const allImageModels = computed(() => [
-    ...IMAGE_MODELS.map(m => ({ ...m, isCustom: false })),
+    ...baseImageModels.value.map(m => ({ ...m, isCustom: false })),
     ...customImageModels.value.map(m => ({
       label: m.label || m.key,
       key: m.key,
@@ -217,7 +339,6 @@ export const useModelStore = defineStore('model', () => {
       sizes: [],
       defaultParams: { quality: 'standard', style: 'vivid' }
     })),
-    // 添加当前渠道的自定义模型
     ...(customImageModelsByProvider.value[currentProvider.value] || []).map(m => ({
       label: m.label || m.key,
       key: m.key,
@@ -250,20 +371,54 @@ export const useModelStore = defineStore('model', () => {
     }))
   ])
 
-  // ============ Computed: Available Models (filtered by provider) ============
+  // ============ Computed: Available Models ============
+  //
+  // v1.3.0：服务端已初始化（ModelRegistry 接管）时，**不再按 currentProvider 过滤**。
+  // 凭据由后端按 model.providers 自动匹配，前端只展示所有 isActive 模型即可。
+  // 服务端未初始化时（Canvas 独立部署 / fetch 失败），保留旧的 provider 过滤兜底。
 
-  // 按渠道过滤的可用模型
-  const availableChatModels = computed(() =>
-    allChatModels.value.filter(m => isModelSupported(m, currentProvider.value))
-  )
+  const availableChatModels = computed(() => {
+    if (serverInitialized.value) return allChatModels.value
+    return allChatModels.value.filter(m => isModelSupported(m, currentProvider.value))
+  })
 
-  const availableImageModels = computed(() =>
-    allImageModels.value.filter(m => isModelSupported(m, currentProvider.value))
-  )
+  const availableImageModels = computed(() => {
+    if (serverInitialized.value) return allImageModels.value
+    return allImageModels.value.filter(m => isModelSupported(m, currentProvider.value))
+  })
+
+  /** 仅图生图场景可用的模型 */
+  const availableImageEditModels = computed(() => {
+    // 优先使用 server 注册的 image_edit 类目（admin 注册并启用的图生图专用模型）
+    if (serverImageEditModels.value.length > 0) {
+      return serverInitialized.value
+        ? serverImageEditModels.value
+        : serverImageEditModels.value.filter(m => isModelSupported(m, currentProvider.value))
+    }
+    // 退回：在 availableImageModels 上按 capabilities.imageEdit 过滤
+    return availableImageModels.value.filter(m => {
+      const serverCap = serverCapabilities.value[m.key]
+      if (serverCap) return !!serverCap.supportsImageEdit
+      if (m.capabilities) return !!m.capabilities.imageEdit
+      return true
+    })
+  })
 
   const availableVideoModels = computed(() =>
     allVideoModels.value.filter(m => isModelSupported(m, currentProvider.value))
   )
+
+  /** v1.3.0：给定 modelKey，返回可与之匹配的 ProviderCredential 列表（供"齿轮选凭据"UI 用） */
+  const getCredentialsForModel = (modelKey) => {
+    const model =
+      serverChatModels.value.find(m => m.key === modelKey) ||
+      serverImageModels.value.find(m => m.key === modelKey) ||
+      serverImageEditModels.value.find(m => m.key === modelKey) ||
+      serverStoryboardModels.value.find(m => m.key === modelKey)
+    if (!model) return []
+    const supportedProviders = Array.isArray(model.provider) ? model.provider : []
+    return serverCredentials.value.filter(c => supportedProviders.includes(c.provider))
+  }
 
   // ============ Computed: Model Options for UI (all models, not filtered by provider) ============
 
@@ -537,7 +692,23 @@ export const useModelStore = defineStore('model', () => {
     // Available models filtered by provider
     availableChatModels,
     availableImageModels,
+    availableImageEditModels,
     availableVideoModels,
+
+    // Server-driven config & capabilities
+    serverConfig,
+    serverCapabilities,
+    serverChatModels,
+    serverImageModels,
+    serverImageEditModels,
+    serverStoryboardModels,
+    serverCredentials,
+    serverDefaults,
+    serverInitialized,
+    initFromServer,
+    getServerCapabilities,
+    getCredentialsForModel,
+    supportsImageEdit,
 
     // Model options for UI (dropdown format)
     imageModelOptions,

@@ -23,13 +23,35 @@ import {
   DEFAULT_VIDEO_DURATION
 } from '@/config/models'
 import { useModelConfig } from '@/hooks/useModelConfig'
+import { useModelStore } from '@/stores/pinia/models'
 
 // Loading state (always false for built-in models) | 加载状态
 const loading = ref(false)
 const error = ref(null)
 
-// Get model config hook | 获取模型配置 hook
+/**
+ * Get model config hook | 获取模型配置 hook
+ *
+ * 优先用 Pinia store（含 ModelRegistry 服务端注册的模型）；
+ * Pinia 不可用时回退到旧的 useModelConfig（仅含硬编码 IMAGE_MODELS / CHAT_MODELS）。
+ *
+ * v1.2.0 之前一直只用 useModelConfig；v1.3.0 起切到 pinia 后，admin 在「模型注册表」
+ * 新增的模型，其 sizes/qualities 才会真正出现在画布前端的下拉里。
+ */
 const getModelConfigHook = () => {
+  try {
+    const store = useModelStore()
+    return {
+      allImageModels: store.allImageModels,
+      allVideoModels: store.allVideoModels,
+      allChatModels: store.allChatModels,
+      getImageModel: store.getImageModel,
+      getVideoModel: store.getVideoModel,
+      getChatModel: store.getChatModel,
+    }
+  } catch {
+    /* not in a setup context — fall through */
+  }
   try {
     return useModelConfig()
   } catch {
@@ -64,19 +86,19 @@ export const getModelConfig = (modelKey) => {
 
 /**
  * Get size options for image model | 获取图片模型尺寸选项
- * Returns options based on model's sizes array and quality
+ * 优先用 server 注册的模型（含 admin 在 ModelRegistry 新增的条目），找不到再回退到内置 IMAGE_MODELS。
  */
 export const getModelSizeOptions = (modelKey, quality = 'standard') => {
-  const model = IMAGE_MODELS.find(m => m.key === modelKey)
-  
-  // If model has getSizesByQuality function, use it | 如果模型有 getSizesByQuality 函数，使用它
+  const modelConfig = getModelConfigHook()
+  const model = modelConfig?.getImageModel?.(modelKey)
+             || IMAGE_MODELS.find(m => m.key === modelKey)
+
   if (model?.getSizesByQuality) {
     return model.getSizesByQuality(quality)
   }
-  
-  if (!model?.sizes) return SEEDREAM_SIZE_OPTIONS
-  
-  // Convert sizes array to dropdown options | 转换 sizes 数组为下拉选项
+
+  if (!model?.sizes || model.sizes.length === 0) return SEEDREAM_SIZE_OPTIONS
+
   const sizeOptions = quality === '4k' ? SEEDREAM_4K_SIZE_OPTIONS : SEEDREAM_SIZE_OPTIONS
   return model.sizes.map(size => {
     const option = sizeOptions.find(o => o.key === size)
@@ -86,9 +108,12 @@ export const getModelSizeOptions = (modelKey, quality = 'standard') => {
 
 /**
  * Get quality options for image model | 获取图片模型画质选项
+ * 同 getModelSizeOptions，先查 server 注册模型再回退内置。
  */
 export const getModelQualityOptions = (modelKey) => {
-  const model = IMAGE_MODELS.find(m => m.key === modelKey)
+  const modelConfig = getModelConfigHook()
+  const model = modelConfig?.getImageModel?.(modelKey)
+             || IMAGE_MODELS.find(m => m.key === modelKey)
   return model?.qualities || []
 }
 

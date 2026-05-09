@@ -668,18 +668,29 @@ const handleGenerate = async (mode = 'auto') => {
       params.image = refImages
     }
 
-    const result = await generate(params)
+    const result = await generate(params, {
+      // v1.4.0：拿到 taskId 立刻持久化到 ImageNode；
+      // 浏览器刷新/关 tab 后 ImageNode 重挂载会用这个 taskId 自动恢复轮询
+      onTaskCreated: (task) => {
+        updateNode(imageNodeId, {
+          loading: true,
+          activeTaskId: task.taskId
+        })
+      }
+    })
 
     // Update image node with generated URL | 更新图片节点 URL
     if (result && result.length > 0) {
       updateNode(imageNodeId, {
         url: result[0].url,
         loading: false,
+        activeTaskId: null,
+        error: null,
         label: '文生图',
         model: localModel.value,
         updatedAt: Date.now()
       })
-      
+
       // Mark this config node as executed | 标记配置节点已执行
       updateNode(props.id, { executed: true, outputNodeId: imageNodeId })
     }
@@ -688,6 +699,7 @@ const handleGenerate = async (mode = 'auto') => {
     // Update node to show error | 更新节点显示错误
     updateNode(imageNodeId, {
       loading: false,
+      activeTaskId: null,
       error: err.message || '生成失败',
       updatedAt: Date.now()
     })

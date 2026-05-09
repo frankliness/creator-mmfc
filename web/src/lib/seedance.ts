@@ -14,6 +14,8 @@ interface CreateTaskInput {
 interface CreateTaskResponse {
   id: string;
   model: string;
+  /** 本次请求 JSON body 中实际使用的 model（与 Ark 响应里的 model 可能不一致） */
+  requestedModel: string;
 }
 
 export interface ApiConfig {
@@ -79,9 +81,13 @@ export async function createSeedanceTask(
     throw new Error(`Seedance 创建任务失败: ${res.status} - ${errText.slice(0, 200)}`);
   }
 
-  const data = await res.json();
+  const data = (await res.json()) as { id: string; model?: string };
   console.log("[seedance] task created:", data.id);
-  return data;
+  return {
+    id: data.id,
+    model: data.model ?? model,
+    requestedModel: model,
+  };
 }
 
 export interface TaskStatusResponse {

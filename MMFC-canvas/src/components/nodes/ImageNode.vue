@@ -322,7 +322,7 @@
  * Image node component | 图片节点组件
  * Displays and manages image content with loading state
  */
-import { ref, nextTick, computed } from 'vue'
+import { ref, nextTick, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Handle, Position, useVueFlow } from '@vue-flow/core'
 import { NIcon, NTooltip, NSwitch, NImagePreview, NModal, NButton } from 'naive-ui'
 import { TrashOutline, ExpandOutline, ImageOutline, CloseCircleOutline, CopyOutline, VideocamOutline, DownloadOutline, EyeOutline, BrushOutline, RefreshOutline, ColorWandOutline, SwapHorizontalOutline } from '@vicons/ionicons5'
@@ -330,6 +330,7 @@ import { updateNode, removeNode, duplicateNode, addNode, addEdge, nodes, current
 import NodeHandleMenu from './NodeHandleMenu.vue'
 import { DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_SIZE } from '../../config/models'
 import { uploadAsset } from '../../api'
+import { pollImageTask } from '../../api/image'
 
 const props = defineProps({
   id: String,
@@ -1004,6 +1005,93 @@ const handleVideoGen = () => {
     updateNodeInternals([textNodeId, configNodeId])
   }, 50)
 }
+
+// ============================================================
+// v1.4.0 — Resume on refresh：异步生图任务恢复
+// ============================================================
+//
+// 当 ImageConfigNode 提交任务后会把 taskId 写到该节点 data.activeTaskId 上。
+// 此处监听：
+//   1. 挂载时如果 data.activeTaskId 存在且 data.url 还没填，启动轮询
+//   2. data.activeTaskId 在生命周期内出现变化（被父节点重新生成）也跟着切轮询
+//
+// 完成时把 url 填进 data，并清掉 activeTaskId；失败时填 error 并清掉 activeTaskId。
+// 节点卸载时 abort 掉正在跑的轮询，避免内存泄漏。
+
+const resumeAbortController = ref(null)
+
+const startResumePoll = async (taskId) => {
+  if (!taskId) return
+
+  // 防呆：如果 url 已经有了（数据写过 race），不重复轮询
+  if (props.data?.url) {
+    updateNode(props.id, { activeTaskId: null })
+    return
+  }
+
+  // 中断上一轮（如果有）
+  if (resumeAbortController.value) {
+    resumeAbortController.value.abort()
+  }
+  const controller = new AbortController()
+  resumeAbortController.value = controller
+
+  try {
+    const task = await pollImageTask(taskId, controller.signal)
+    if (controller.signal.aborted) return
+
+    const firstUrl = task?.images?.[0]?.url
+    if (firstUrl) {
+      updateNode(props.id, {
+        url: firstUrl,
+        loading: false,
+        activeTaskId: null,
+        error: null,
+        updatedAt: Date.now()
+      })
+    } else {
+      updateNode(props.id, {
+        loading: false,
+        activeTaskId: null,
+        error: '任务完成但未返回图片',
+        updatedAt: Date.now()
+      })
+    }
+  } catch (err) {
+    if (err?.name === 'AbortError') return
+    updateNode(props.id, {
+      loading: false,
+      activeTaskId: null,
+      error: err?.message || '任务失败',
+      updatedAt: Date.now()
+    })
+    if (typeof window !== 'undefined' && window.$message) {
+      window.$message.error(`图片任务恢复失败：${err?.message || '未知错误'}`)
+    }
+  }
+}
+
+onMounted(() => {
+  if (props.data?.activeTaskId && !props.data?.url) {
+    startResumePoll(props.data.activeTaskId)
+  }
+})
+
+watch(
+  () => props.data?.activeTaskId,
+  (newId, oldId) => {
+    if (newId && newId !== oldId && !props.data?.url) {
+      startResumePoll(newId)
+    }
+  }
+)
+
+onBeforeUnmount(() => {
+  if (resumeAbortController.value) {
+    resumeAbortController.value.abort()
+    resumeAbortController.value = null
+  }
+})
 </script>
 
 <style scoped>

@@ -25,6 +25,76 @@ const mapGeminiInlineData = (part = {}) => {
 }
 
 export const PROVIDERS = {
+  openai: {
+    label: 'OpenAI Compatible',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    endpoints: {
+      chat: '/chat/completions',
+      image: '/images/generations',
+      video: null,
+      videoQuery: null,
+    },
+    requestAdapter: {
+      chat: (params) => {
+        const adapted = {
+          model: params.model,
+          messages: params.messages,
+        }
+        if (params.temperature !== undefined) adapted.temperature = params.temperature
+        if (params.max_tokens !== undefined) adapted.max_tokens = params.max_tokens
+        if (params.stream !== undefined) adapted.stream = params.stream
+        return adapted
+      },
+    },
+    responseAdapter: {
+      chat: (response) => response.choices?.[0]?.message?.content || '',
+      image: (response) => {
+        const items = response.data || []
+        return items.map((item) => ({
+          url: item.b64_json ? `data:image/png;base64,${item.b64_json}` : (item.url || ''),
+          mimeType: 'image/png',
+          revisedPrompt: item.revised_prompt || '',
+        }))
+      },
+      video: (response) => response,
+    },
+  },
+
+  azure_openai: {
+    label: 'Azure OpenAI',
+    defaultBaseUrl: '',
+    endpoints: {
+      chat: '/chat/completions',
+      image: '/images/generations',
+      video: null,
+      videoQuery: null,
+    },
+    requestAdapter: {
+      chat: (params) => {
+        const adapted = {
+          model: params.model,
+          messages: params.messages,
+        }
+        if (params.temperature !== undefined) adapted.temperature = params.temperature
+        if (params.max_tokens !== undefined) adapted.max_tokens = params.max_tokens
+        if (params.stream !== undefined) adapted.stream = params.stream
+        return adapted
+      },
+    },
+    responseAdapter: {
+      chat: (response) => response.choices?.[0]?.message?.content || '',
+      image: (response) => {
+        const items = response.data || []
+        return items.map((item) => ({
+          url: item.b64_json ? `data:image/png;base64,${item.b64_json}` : (item.url || ''),
+          mimeType: 'image/png',
+          revisedPrompt: item.revised_prompt || '',
+        }))
+      },
+      video: (response) => response,
+    },
+  },
+
   google: {
     label: 'Google Gemini (Official)',
     defaultBaseUrl: GOOGLE_OPENAI_BASE_URL,
@@ -93,7 +163,7 @@ export const PROVIDERS = {
       video: (response) => response
     }
   },
-  default: 'google'
+  default: 'google',
 }
 
 export const getProviderList = () => {

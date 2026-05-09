@@ -4,7 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { authError, requireCanvasUser } from "@/lib/canvas/canvas-auth";
 import { checkChatQuota } from "@/lib/canvas/canvas-quota";
 import { logCanvasCall } from "@/lib/canvas/canvas-logger";
-import { getGeminiAccess } from "@/lib/canvas/gemini-image";
+import { resolveChatByModel } from "@/lib/llm/credential-resolver";
+import { buildChatEndpoint } from "@/lib/llm/chat";
 import { readCanvasAsset } from "@/lib/canvas/canvas-storage";
 
 export const runtime = "nodejs";
@@ -23,6 +24,8 @@ const messageContentSchema = z.union([
 const bodySchema = z.object({
   projectId: z.string().min(1).optional(),
   model: z.string().min(1),
+  /** v1.3.0：可选指定凭据 id（前端齿轮里挑的） */
+  credentialId: z.string().min(1).optional(),
   messages: z.array(
     z.object({
       role: z.enum(["system", "user", "assistant"]),
@@ -179,17 +182,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: quota.reason }, { status: 429 });
   }
 
-  let access;
+  let chatEndpoint;
+  let chatProvider: string = "unknown";
   try {
-    access = await getGeminiAccess();
+    const config = await resolveChatByModel(parsed.data.model, {
+      userId: auth.user.id,
+      preferredCredentialId: parsed.data.credentialId,
+    });
+    chatProvider = config.provider;
+    chatEndpoint = buildChatEndpoint(config, parsed.data.model);
   } catch (err) {
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Gemini 配置错误" },
+      { error: err instanceof Error ? err.message : "聊天模型配置错误" },
       { status: 500 }
     );
   }
 
-  const upstreamUrl = `${access.openaiBase}/chat/completions`;
+  const upstreamUrl = chatEndpoint.url;
   const upstreamPayload = {
     model: parsed.data.model,
     messages: parsed.data.messages,
@@ -214,16 +223,14 @@ export async function POST(req: NextRequest) {
       durationMs: Date.now() - startedAt,
       status: "failed",
       error: message,
+      upstreamProvider: chatProvider,
     });
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
   const upstream = await fetch(upstreamUrl, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${access.apiKey}`,
-    },
+    headers: chatEndpoint.headers,
     body: JSON.stringify({
       ...upstreamPayload,
       messages: normalizedMessages,
@@ -240,9 +247,10 @@ export async function POST(req: NextRequest) {
       durationMs: Date.now() - startedAt,
       status: "failed",
       error: text.slice(0, 1000) || `HTTP ${upstream.status}`,
+      upstreamProvider: chatProvider,
     });
     return NextResponse.json(
-      { error: `Gemini 调用失败 HTTP ${upstream.status}`, details: text.slice(0, 1000) },
+      { error: `聊天模型调用失败 HTTP ${upstream.status}`, details: text.slice(0, 1000) },
       { status: 502 }
     );
   }
@@ -298,6 +306,7 @@ export async function POST(req: NextRequest) {
           totalTokens: usage.totalTokens,
           durationMs: Date.now() - startedAt,
           status: "success",
+          upstreamProvider: chatProvider,
         });
       }
     },

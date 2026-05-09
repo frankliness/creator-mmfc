@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateStoryboards } from "@/lib/gemini";
 import { logTokenUsage } from "@/lib/token-logger";
+import { estimateCostUSD } from "@/lib/llm/capabilities";
 import { logUserAction } from "@/lib/user-action-logger";
 
 export const maxDuration = 120;
@@ -67,27 +68,34 @@ export async function POST(
       },
     });
 
-    const { storyboards: results, usage, model } = await generateStoryboards({
-      script: project.script,
-      fullScript: project.fullScript,
-      assets: JSON.stringify(project.assetsJson, null, 2),
-      assetDescriptions: JSON.stringify(project.assetDescriptions, null, 2),
-      style: project.style,
-    });
+    const { storyboards: results, usage, model } = await generateStoryboards(
+      {
+        script: project.script,
+        fullScript: project.fullScript,
+        assets: JSON.stringify(project.assetsJson, null, 2),
+        assetDescriptions: JSON.stringify(project.assetDescriptions, null, 2),
+        style: project.style,
+      },
+      { userId: session.user.id }
+    );
 
     console.log(
       `[generate-storyboards] project=${id} storyboards=${results.length} tokens=${usage.totalTokenCount ?? 0}`
     );
 
+    const inTokens = usage.promptTokenCount ?? 0;
+    const outTokens = usage.candidatesTokenCount ?? 0;
+    const cost = estimateCostUSD(model, inTokens, outTokens);
     await logTokenUsage({
       userId: session.user.id,
       projectId: id,
-      provider: "gemini",
+      provider: "storyboard",
       model,
       requestType: "storyboard_generation",
-      inputTokens: BigInt(usage.promptTokenCount ?? 0),
-      outputTokens: BigInt(usage.candidatesTokenCount ?? 0),
+      inputTokens: BigInt(inTokens),
+      outputTokens: BigInt(outTokens),
       totalTokens: BigInt(usage.totalTokenCount ?? 0),
+      costEstimate: cost > 0 ? cost : null,
       metadata: usage,
     });
 

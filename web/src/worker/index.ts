@@ -9,8 +9,15 @@ import {
 import { logTokenUsage } from "../lib/token-logger";
 import { decrypt } from "../lib/crypto";
 import { logUserAction } from "../lib/user-action-logger";
+import { pollCanvasImageTasks, reclaimZombies } from "./pollCanvasImageTasks";
 
 const prisma = new PrismaClient();
+
+/** 画布图片任务轮询间隔（独立于视频轮询，因为它更紧凑） */
+const CANVAS_IMAGE_POLL_INTERVAL = parseInt(
+  process.env.WORKER_CANVAS_IMAGE_POLL_INTERVAL || "3000",
+  10
+);
 
 const POLL_INTERVAL = parseInt(process.env.WORKER_POLL_INTERVAL || "15000");
 const BATCH_SIZE = 20;
@@ -360,21 +367,44 @@ async function retryPersist() {
 
 async function mainLoop() {
   console.log(
-    `[worker] started, poll interval=${POLL_INTERVAL}ms`
+    `[worker] started, video-poll=${POLL_INTERVAL}ms, canvas-image-poll=${CANVAS_IMAGE_POLL_INTERVAL}ms`
   );
 
+  // 启动时回收上一轮进程残留的 RUNNING CanvasImageTask
+  try {
+    await reclaimZombies(prisma);
+  } catch (err) {
+    console.error("[worker] reclaimZombies failed:", err);
+  }
+
+  // 视频任务循环（保留原节奏）
+  (async () => {
+    while (true) {
+      try {
+        await pollTasks();
+        await retryPersist();
+        await checkProjectCompletion();
+      } catch (err) {
+        console.error(
+          "[worker] video loop error:",
+          err instanceof Error ? err.message : err
+        );
+      }
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+    }
+  })();
+
+  // 画布图片任务循环（独立节奏；用户体验对延迟敏感所以更紧凑）
   while (true) {
     try {
-      await pollTasks();
-      await retryPersist();
-      await checkProjectCompletion();
+      await pollCanvasImageTasks(prisma);
     } catch (err) {
       console.error(
-        "[worker] loop error:",
+        "[worker] canvas-image loop error:",
         err instanceof Error ? err.message : err
       );
     }
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+    await new Promise((r) => setTimeout(r, CANVAS_IMAGE_POLL_INTERVAL));
   }
 }
 

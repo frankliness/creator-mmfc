@@ -156,7 +156,12 @@ export const useChat = (options = {}) => {
 
 /**
  * Image generation composable | 图片生成组合式函数
- * Simplified for open source - fixed input/output format
+ *
+ * v1.4.0：异步任务流。`generate(params, options)` 内部 = submit + poll。
+ *   - options.onTaskCreated(task)：拿到 taskId 后立刻回调；调用方应把 taskId
+ *     持久化到 ImageNode（resume on refresh 用）
+ *   - options.onProgress(task)：每次轮询拿到中间状态时回调
+ *   - options.signal：可中断
  */
 export const useImageGeneration = () => {
   const { loading, error, status, reset, setLoading, setError, setSuccess } = useApiState()
@@ -164,16 +169,13 @@ export const useImageGeneration = () => {
 
   const images = ref([])
   const currentImage = ref(null)
+  const taskId = ref(null)
 
-  /**
-   * Generate image with fixed params | 固定参数生成图片
-   * @param {Object} params - { model, prompt, size, image?, sourceNodeId?, projectId }
-   * 后端会根据 model 自动走 Gemini Image API 或 chat 适配。
-   */
-  const generate = async (params) => {
+  const generate = async (params, options = {}) => {
     setLoading(true)
     images.value = []
     currentImage.value = null
+    taskId.value = null
 
     try {
       const modelConfig = getModelByName(params.model)
@@ -183,7 +185,8 @@ export const useImageGeneration = () => {
         prompt: params.prompt,
         size: params.size || modelConfig?.defaultParams?.size || '1:1',
         quality: params.quality || modelConfig?.defaultParams?.quality,
-        sourceNodeId: params.sourceNodeId
+        sourceNodeId: params.sourceNodeId,
+        credentialId: params.credentialId
       }
 
       if (params.image) {
@@ -195,9 +198,19 @@ export const useImageGeneration = () => {
         throw new Error('生图缺少 projectId（请在编辑器内打开项目后再尝试）')
       }
 
-      const response = await generateImage(requestData, { projectId })
-      const adaptedData = adaptCanvasImageResponse(response)
+      const response = await generateImage(requestData, {
+        projectId,
+        signal: options.signal,
+        onTaskCreated: (task) => {
+          taskId.value = task.taskId
+          if (typeof options.onTaskCreated === 'function') {
+            try { options.onTaskCreated(task) } catch (_) { /* ignore */ }
+          }
+        },
+        onProgress: options.onProgress
+      })
 
+      const adaptedData = adaptCanvasImageResponse(response)
       images.value = adaptedData
       currentImage.value = adaptedData[0] || null
       setSuccess()
@@ -208,7 +221,7 @@ export const useImageGeneration = () => {
     }
   }
 
-  return { loading, error, status, images, currentImage, generate, reset }
+  return { loading, error, status, images, currentImage, taskId, generate, reset }
 }
 
 /**

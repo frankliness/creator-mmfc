@@ -39,6 +39,7 @@ export const streamChatCompletions = async function* (data, signal, options = {}
     model: data.model,
     messages: data.messages,
     projectId: resolveProjectId(options),
+    ...(data.credentialId ? { credentialId: data.credentialId } : {}),
     ...(data.temperature !== undefined ? { temperature: data.temperature } : {}),
     ...(data.max_tokens !== undefined ? { max_tokens: data.max_tokens } : {}),
     ...(data.reasoning_effort !== undefined ? { reasoning_effort: data.reasoning_effort } : {})

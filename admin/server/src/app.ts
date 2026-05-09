@@ -14,6 +14,9 @@ import { auditLogRoutes } from "./modules/audit-log/audit-log.routes.js";
 import { adminMgmtRoutes } from "./modules/admin-mgmt/admin-mgmt.routes.js";
 import { canvasProjectRoutes } from "./modules/canvas-projects/canvas-projects.routes.js";
 import { userActionLogRoutes } from "./modules/user-action-log/user-action-log.routes.js";
+import { connectionTestRoutes } from "./modules/connection-test/connection-test.routes.js";
+import { modelRegistryRoutes } from "./modules/model-registry/model-registry.routes.js";
+import { credentialsRoutes } from "./modules/credentials/credentials.routes.js";
 
 function parseCorsOrigins(): string | string[] {
   const raw = process.env.CORS_ORIGIN || "http://localhost:8080";
@@ -49,6 +52,9 @@ export async function buildApp() {
   await app.register(userActionLogRoutes, { prefix: "/api/admin/user-action-logs" });
   await app.register(adminMgmtRoutes, { prefix: "/api/admin/admins" });
   await app.register(canvasProjectRoutes, { prefix: "/api/admin/canvas-projects" });
+  await app.register(connectionTestRoutes, { prefix: "/api/admin/connection-test" });
+  await app.register(modelRegistryRoutes, { prefix: "/api/admin/model-registry" });
+  await app.register(credentialsRoutes, { prefix: "/api/admin/credentials" });
 
   app.get("/api/admin/health", async () => ({ status: "ok" }));
 

@@ -44,18 +44,48 @@
         </a-table>
 
         <a-modal v-model:open="showConfigModal" title="新增 API 配置" @ok="handleCreateConfig">
+          <a-alert
+            type="info"
+            show-icon
+            style="margin-bottom: 12px"
+            message="说明"
+            description="callType 决定该配置在哪个用途下生效；同一用户、同一 callType 下只允许一个『默认』。被设为默认后，该用户在该用途下会优先使用这条配置（覆盖全局 GlobalConfig）。"
+          />
           <a-form layout="vertical">
-            <a-form-item label="Provider"><a-select v-model:value="configForm.provider">
-              <a-select-option value="seedance">Seedance</a-select-option>
-              <a-select-option value="gemini">Gemini</a-select-option>
-              <a-select-option value="openai">OpenAI</a-select-option>
-              <a-select-option value="claude">Claude</a-select-option>
-            </a-select></a-form-item>
+            <a-form-item label="用途（callType）">
+              <a-select v-model:value="configForm.callType">
+                <a-select-option value="chat">聊天</a-select-option>
+                <a-select-option value="canvas_image">画布文生图</a-select-option>
+                <a-select-option value="canvas_image_edit">画布图生图</a-select-option>
+                <a-select-option value="storyboard">分镜生成</a-select-option>
+                <a-select-option value="video">视频（Seedance）</a-select-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item label="Provider">
+              <a-select v-model:value="configForm.provider">
+                <a-select-option value="openai">OpenAI Compatible (DeepAI / 自托管)</a-select-option>
+                <a-select-option value="azure_openai">Azure OpenAI</a-select-option>
+                <a-select-option value="google">Google Gemini</a-select-option>
+                <a-select-option value="custom">Custom</a-select-option>
+                <a-select-option value="seedance">Seedance（视频）</a-select-option>
+                <a-select-option value="gemini">Gemini（旧 key 名）</a-select-option>
+              </a-select>
+            </a-form-item>
             <a-form-item label="名称"><a-input v-model:value="configForm.name" /></a-form-item>
-            <a-form-item label="Endpoint"><a-input v-model:value="configForm.endpoint" /></a-form-item>
+            <a-form-item label="Endpoint / Base URL"><a-input v-model:value="configForm.endpoint" /></a-form-item>
             <a-form-item label="API Key"><a-input-password v-model:value="configForm.apiKey" /></a-form-item>
-            <a-form-item label="模型"><a-input v-model:value="configForm.model" /></a-form-item>
-            <a-form-item><a-checkbox v-model:checked="configForm.isDefault">设为默认</a-checkbox></a-form-item>
+            <a-form-item label="模型 (model)"><a-input v-model:value="configForm.model" /></a-form-item>
+
+            <template v-if="configForm.provider === 'azure_openai'">
+              <a-form-item label="Deployment（Azure 专用）">
+                <a-input v-model:value="configForm.deployment" placeholder="如 my-gpt4o-prod；不填则用 model 名" />
+              </a-form-item>
+              <a-form-item label="API Version（Azure 专用）">
+                <a-input v-model:value="configForm.apiVersion" placeholder="2024-08-01-preview" />
+              </a-form-item>
+            </template>
+
+            <a-form-item><a-checkbox v-model:checked="configForm.isDefault">设为默认（同 callType 下唯一）</a-checkbox></a-form-item>
           </a-form>
         </a-modal>
       </a-tab-pane>
@@ -102,7 +132,17 @@ const user = ref<any>(null);
 const remark = ref("");
 const configs = ref<any[]>([]);
 const showConfigModal = ref(false);
-const configForm = reactive({ provider: "seedance", name: "", endpoint: "", apiKey: "", model: "", isDefault: false });
+const configForm = reactive({
+  provider: "openai",
+  name: "",
+  endpoint: "",
+  apiKey: "",
+  model: "",
+  callType: "chat" as "chat" | "canvas_image" | "canvas_image_edit" | "storyboard" | "video",
+  deployment: "",
+  apiVersion: "",
+  isDefault: false,
+});
 
 const canvasQuotaForm = reactive<{ daily_image_limit: number | null; daily_chat_tokens: number | null }>({
   daily_image_limit: null,
@@ -110,9 +150,13 @@ const canvasQuotaForm = reactive<{ daily_image_limit: number | null; daily_chat_
 });
 
 const configColumns = [
-  { title: "Provider", dataIndex: "provider" },
+  { title: "用途", dataIndex: "callType", width: 130 },
+  { title: "Provider", dataIndex: "provider", width: 120 },
   { title: "名称", dataIndex: "name" },
-  { title: "Endpoint", dataIndex: "endpoint" },
+  { title: "Endpoint", dataIndex: "endpoint", ellipsis: true },
+  { title: "Model / Deployment", key: "model", customRender: ({ record }: any) =>
+      record.deployment ? `${record.model || "-"} → ${record.deployment}` : (record.model || "-"),
+  },
   { title: "API Key", dataIndex: "apiKey" },
   { title: "默认", dataIndex: "isDefault", customRender: ({ text }: any) => text ? "是" : "否" },
   { title: "操作", key: "action", width: 80 },

@@ -66,7 +66,12 @@ export async function POST(
       data: {
         storyboardId: id,
         arkTaskId: result.id,
-        model: result.model || process.env.SEEDANCE_ENDPOINT || process.env.SEEDANCE_MODEL || "",
+        model:
+          result.requestedModel ||
+          result.model ||
+          process.env.SEEDANCE_ENDPOINT ||
+          process.env.SEEDANCE_MODEL ||
+          "",
         status: "SUBMITTED",
         apiConfigId,
       },
@@ -90,7 +95,12 @@ export async function POST(
       metadata: {
         taskId: createdTask.id,
         arkTaskId: result.id,
-        model: result.model || process.env.SEEDANCE_ENDPOINT || process.env.SEEDANCE_MODEL || "",
+        model:
+          result.requestedModel ||
+          result.model ||
+          process.env.SEEDANCE_ENDPOINT ||
+          process.env.SEEDANCE_MODEL ||
+          "",
         submitMode: "single",
       },
     });

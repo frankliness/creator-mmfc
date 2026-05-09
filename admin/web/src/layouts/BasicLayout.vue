@@ -44,7 +44,10 @@
         <a-sub-menu key="system">
           <template #icon><SettingOutlined /></template>
           <template #title>系统设置</template>
-          <a-menu-item key="/system/global-config">全局配置</a-menu-item>
+          <a-menu-item key="/system/credentials">凭据池</a-menu-item>
+          <a-menu-item key="/system/defaults">默认模型</a-menu-item>
+          <a-menu-item key="/system/model-registry">模型注册表</a-menu-item>
+          <a-menu-item key="/system/global-config">全局配置（高级）</a-menu-item>
           <a-menu-item key="/system/admins">管理员管理</a-menu-item>
         </a-sub-menu>
       </a-menu>

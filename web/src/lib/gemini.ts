@@ -1,7 +1,11 @@
 import { DIRECTOR_SYSTEM_PROMPT } from "./prompts/director-system";
 import { STORYBOARD_RESPONSE_SCHEMA } from "./prompts/storyboard-schema";
 import { getPrompt, getJsonSchemaPrompt } from "./prompt-loader";
+import { resolveStoryboardConfig } from "./llm/config-resolver";
+import { resolveStoryboardByModel } from "./llm/credential-resolver";
 import { getGlobalConfig } from "./global-config";
+import { buildChatEndpoint } from "./llm/chat";
+import type { ProviderConfig } from "./llm/types";
 
 interface GeminiRequest {
   script: string;
@@ -110,35 +114,83 @@ function renderUserPromptTemplate(template: string, input: GeminiRequest): strin
   return rendered;
 }
 
-export async function generateStoryboards(input: GeminiRequest): Promise<GenerateStoryboardsResult> {
-  const apiKey = await getGlobalConfig("gemini_api_key") || process.env.GEMINI_API_KEY;
-  const model = await getGlobalConfig("gemini_model") || process.env.GEMINI_MODEL || "gemini-3.1-pro-preview";
+/**
+ * 把 Gemini 风格的 schema（type: "OBJECT" / "ARRAY" 等大写）转换为标准 JSON Schema（小写），
+ * 让 OpenAI 兼容 provider 的 response_format.json_schema 能直接用。
+ */
+function convertGeminiSchemaToOpenAI(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(convertGeminiSchemaToOpenAI);
+  if (!node || typeof node !== "object") return node;
 
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY 未配置");
+  const src = node as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...src };
+
+  if (typeof out.type === "string") {
+    out.type = out.type.toLowerCase();
   }
+  if (out.properties && typeof out.properties === "object") {
+    const props = out.properties as Record<string, unknown>;
+    out.properties = Object.fromEntries(
+      Object.entries(props).map(([k, v]) => [k, convertGeminiSchemaToOpenAI(v)])
+    );
+  }
+  if (out.items) {
+    out.items = convertGeminiSchemaToOpenAI(out.items);
+  }
+  // Gemini 的 propertyOrdering 在 OpenAI 这边非标，删掉
+  delete out.propertyOrdering;
+  return out;
+}
 
-  const systemPrompt = await getPrompt("director_system", DIRECTOR_SYSTEM_PROMPT);
-  const responseSchema = await getJsonSchemaPrompt("storyboard_schema", STORYBOARD_RESPONSE_SCHEMA);
-  const userPromptTemplate = await getPrompt("user_prompt_template", userPrompt);
+export async function generateStoryboards(
+  input: GeminiRequest,
+  options: { userId?: string } = {}
+): Promise<GenerateStoryboardsResult> {
+  // v1.3.0：优先用 ProviderCredential 池解析（前提：admin 在「默认模型」页配了 storyboard_default_model_key）
+  // 否则回退到 v1.2.0 的 GlobalConfig.${purpose}_* 路径
+  const defaultModelKey = await getGlobalConfig("storyboard_default_model_key");
+  const config = defaultModelKey
+    ? await resolveStoryboardByModel(defaultModelKey, { userId: options.userId })
+    : await resolveStoryboardConfig(options.userId);
+
+  // 加载 prompts 时透传 provider，让 admin 在 prompt 管理里
+  // 给特定 provider 单独配置 schema/system prompt（applicableProviders=["openai"] 等）
+  const ctx = { provider: config.provider };
+
+  const systemPrompt = await getPrompt("director_system", DIRECTOR_SYSTEM_PROMPT, ctx);
+  const responseSchema = await getJsonSchemaPrompt(
+    "storyboard_schema",
+    STORYBOARD_RESPONSE_SCHEMA,
+    ctx
+  );
+  const userPromptTemplate = await getPrompt("user_prompt_template", userPrompt, ctx);
   const finalUserPrompt = renderUserPromptTemplate(userPromptTemplate, input);
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  if (config.provider === "google") {
+    return generateStoryboardsGemini(config, { systemPrompt, responseSchema, finalUserPrompt });
+  }
+  return generateStoryboardsOpenAI(config, { systemPrompt, responseSchema, finalUserPrompt });
+}
+
+interface StoryboardCallInput {
+  systemPrompt: string;
+  responseSchema: unknown;
+  finalUserPrompt: string;
+}
+
+async function generateStoryboardsGemini(
+  config: ProviderConfig,
+  { systemPrompt, responseSchema, finalUserPrompt }: StoryboardCallInput
+): Promise<GenerateStoryboardsResult> {
+  const base = config.baseUrl.replace(/\/+$/, "").replace(/\/openai$/, "");
+  const url = `${base}/models/${encodeURIComponent(config.model)}:generateContent?key=${config.apiKey}`;
 
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      systemInstruction: {
-        role: "system",
-        parts: [{ text: systemPrompt }],
-      },
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: finalUserPrompt }],
-        },
-      ],
+      systemInstruction: { role: "system", parts: [{ text: systemPrompt }] },
+      contents: [{ role: "user", parts: [{ text: finalUserPrompt }] }],
       generationConfig: {
         maxOutputTokens: 65535,
         temperature: 0.5,
@@ -181,12 +233,84 @@ export async function generateStoryboards(input: GeminiRequest): Promise<Generat
   }
 
   const usageMetadata: GeminiUsageMetadata = result.usageMetadata ?? {};
-
   const parsed = JSON.parse(text);
   return {
     storyboards: parsed.storyboards as StoryboardResult[],
     usage: usageMetadata,
-    model,
+    model: config.model,
+  };
+}
+
+async function generateStoryboardsOpenAI(
+  config: ProviderConfig,
+  { systemPrompt, responseSchema, finalUserPrompt }: StoryboardCallInput
+): Promise<GenerateStoryboardsResult> {
+  const { url, headers } = buildChatEndpoint(config, config.model);
+  const openaiSchema = convertGeminiSchemaToOpenAI(responseSchema);
+
+  const body: Record<string, unknown> = {
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: finalUserPrompt },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "storyboard_response",
+        schema: openaiSchema,
+      },
+    },
+    temperature: 0.5,
+    max_tokens: 16384,
+  };
+  // Azure 用 deployment URL，body.model 字段冗余；其他 provider 必须传
+  if (config.provider !== "azure_openai") body.model = config.model;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error("[storyboard][openai-compat] API error:", response.status, errText);
+    throw new Error(`分镜模型调用失败 (${config.provider} ${response.status}): ${errText.slice(0, 300)}`);
+  }
+
+  const result = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  };
+  const text = result.choices?.[0]?.message?.content;
+  if (!text || typeof text !== "string") {
+    throw new Error(
+      `分镜模型未返回内容（finish_reason=${result.choices?.[0]?.finish_reason ?? "unknown"}）`
+    );
+  }
+
+  let parsed: { storyboards?: StoryboardResult[] };
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    console.error("[storyboard][openai-compat] JSON parse failed:", text.slice(0, 500));
+    throw new Error(`分镜模型返回非 JSON 内容（解析失败）`);
+  }
+  if (!parsed.storyboards || !Array.isArray(parsed.storyboards)) {
+    throw new Error("分镜模型返回数据缺少 storyboards 数组");
+  }
+
+  // 把 OpenAI usage 字段映射到 GeminiUsageMetadata 的形态，调用方代码无需改
+  const usageMetadata: GeminiUsageMetadata = {
+    promptTokenCount: result.usage?.prompt_tokens,
+    candidatesTokenCount: result.usage?.completion_tokens,
+    totalTokenCount: result.usage?.total_tokens,
+  };
+
+  return {
+    storyboards: parsed.storyboards,
+    usage: usageMetadata,
+    model: config.model,
   };
 }
 

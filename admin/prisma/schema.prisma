@@ -21,12 +21,13 @@ model User {
   status         UserStatus      @default(ACTIVE)
   quota          Json?
   remark         String?         @db.Text
-  projects       Project[]
-  apiConfigs     UserApiConfig[]
-  tokenUsages    TokenUsageLog[]
-  actionLogs     UserActionLog[]
-  canvasProjects CanvasProject[]
-  createdAt      DateTime        @default(now())
+  projects         Project[]
+  apiConfigs       UserApiConfig[]
+  tokenUsages      TokenUsageLog[]
+  actionLogs       UserActionLog[]
+  canvasProjects   CanvasProject[]
+  canvasImageTasks CanvasImageTask[]
+  createdAt        DateTime        @default(now())
 }
 
 enum UserStatus {
@@ -160,22 +161,81 @@ enum AdminRole {
 }
 
 model UserApiConfig {
-  id        String           @id @default(uuid())
-  userId    String
-  user      User             @relation(fields: [userId], references: [id])
-  provider  String
-  name      String
-  endpoint  String
-  apiKey    String
-  model     String?
-  isDefault Boolean          @default(false)
-  isActive  Boolean          @default(true)
-  tasks     GenerationTask[]
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
+  id           String              @id @default(uuid())
+  userId       String
+  user         User                @relation(fields: [userId], references: [id])
+  provider     String
+  name         String
+  endpoint     String
+  apiKey       String
+  model        String?
+  /** 用途分类：video / chat / storyboard / canvas_image / canvas_image_edit。video 为旧默认（Seedance） */
+  callType     String              @default("video")
+  /** Azure OpenAI 专用：部署名（与 model 解耦） */
+  deployment   String?
+  /** Azure OpenAI 专用：api-version */
+  apiVersion   String?
+  /** 可选：指向共享 ProviderCredential。设置后运行时优先用该共享凭据。 */
+  credentialId String?
+  credential   ProviderCredential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  isDefault    Boolean             @default(false)
+  isActive     Boolean             @default(true)
+  tasks        GenerationTask[]
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
 
   @@index([userId])
   @@index([userId, provider])
+  @@index([userId, callType, isDefault])
+  @@index([credentialId])
+}
+
+/// admin 维护的共享凭据。每个 provider 类型可有多条；主用凭据按 provider + purposes + modelKeys 匹配。
+model ProviderCredential {
+  id             String          @id @default(uuid())
+  provider       String
+  name           String
+  baseUrl        String
+  apiKey         String
+  deployment     String?
+  apiVersion     String?
+  isActive       Boolean         @default(true)
+  purposes       Json?
+  modelKeys      Json?
+  isPrimary      Boolean         @default(false)
+  sortOrder      Int             @default(100)
+  remark         String?
+  userApiConfigs UserApiConfig[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([provider, isActive])
+  @@index([provider, isPrimary])
+}
+
+model ModelRegistry {
+  id            String   @id @default(uuid())
+  /** 调用接口时 body.model 的值，如 "gpt-4o" / "gemini-3-pro-image-preview" */
+  modelKey      String
+  /** 前端 dropdown 显示的人类友好名 */
+  label         String
+  /** 用途：chat / canvas_image / canvas_image_edit / storyboard */
+  category      String
+  /** 适用 provider 类型数组 */
+  providers     Json
+  /** 能力字段 JSON */
+  capabilities  Json
+  sizes         Json?
+  qualities     Json?
+  defaultParams Json?
+  tips          String?  @db.Text
+  isActive      Boolean  @default(true)
+  sortOrder     Int      @default(100)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([modelKey, category])
+  @@index([category, isActive, sortOrder])
 }
 
 model GlobalConfig {
@@ -235,17 +295,21 @@ model UserActionLog {
 }
 
 model PromptTemplate {
-  id          String         @id @default(uuid())
-  name        String
-  slug        String         @unique
-  category    PromptCategory
-  description String?        @db.Text
-  content     String         @db.Text
-  version     Int            @default(1)
-  isActive    Boolean        @default(true)
-  versions    PromptVersion[]
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id                  String          @id @default(uuid())
+  name                String
+  slug                String
+  category            PromptCategory
+  description         String?         @db.Text
+  content             String          @db.Text
+  /** JSON 数组，列出该条目适用于哪些 provider（如 ["openai","azure_openai"]）；null = 通用，所有 provider 都生效 */
+  applicableProviders Json?
+  version             Int             @default(1)
+  isActive            Boolean         @default(true)
+  versions            PromptVersion[]
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@index([slug, isActive])
 }
 
 enum PromptCategory {
@@ -290,19 +354,20 @@ model AuditLog {
 // ──────────────────────────────────────────────
 
 model CanvasProject {
-  id        String         @id @default(uuid())
-  userId    String
-  user      User           @relation(fields: [userId], references: [id])
-  name      String
-  thumbnail String?        @db.Text
-  viewport  Json           @default("{\"x\":100,\"y\":50,\"zoom\":0.8}")
-  status    CanvasStatus   @default(ACTIVE)
-  nodes     CanvasNode[]
-  edges     CanvasEdge[]
-  assets    CanvasAsset[]
-  aiCalls   CanvasAiCall[]
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
+  id         String            @id @default(uuid())
+  userId     String
+  user       User              @relation(fields: [userId], references: [id])
+  name       String
+  thumbnail  String?           @db.Text
+  viewport   Json              @default("{\"x\":100,\"y\":50,\"zoom\":0.8}")
+  status     CanvasStatus      @default(ACTIVE)
+  nodes      CanvasNode[]
+  edges      CanvasEdge[]
+  assets     CanvasAsset[]
+  aiCalls    CanvasAiCall[]
+  imageTasks CanvasImageTask[]
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
 
   @@index([userId])
   @@index([userId, updatedAt])
@@ -386,4 +451,38 @@ model CanvasAiCall {
 
   @@index([userId, createdAt])
   @@index([projectId])
+}
+
+/// 画布图片生成任务（v1.4.0 起异步化）。
+model CanvasImageTask {
+  id                String        @id @default(uuid())
+  userId            String
+  user              User          @relation(fields: [userId], references: [id])
+  projectId         String
+  project           CanvasProject @relation(fields: [projectId], references: [id])
+  sourceNodeId      String?
+  status            String        @default("PENDING")
+  callType          String
+  model             String
+  credentialId      String?
+  prompt            String        @db.Text
+  size              String?
+  quality           String?
+  isEdit            Boolean       @default(false)
+  refImagesSnapshot Json?
+  upstreamProvider  String?
+  resultAssetIds    Json?
+  revisedPrompt     String?       @db.Text
+  costEstimate      Decimal?      @db.Decimal(10, 6)
+  durationMs        Int?
+  error             String?       @db.Text
+  attempts          Int           @default(0)
+  startedAt         DateTime?
+  finishedAt        DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([userId, status])
+  @@index([projectId, status, createdAt])
+  @@index([status, createdAt])
 }
