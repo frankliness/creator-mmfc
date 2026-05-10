@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { createSeedanceTask, type ApiConfig } from "@/lib/seedance";
 import { decrypt } from "@/lib/crypto";
+import { resolveStoryboardSeed } from "@/lib/storyboard-seed";
 import { logUserAction } from "@/lib/user-action-logger";
 
 export async function POST(
@@ -53,13 +54,15 @@ export async function POST(
       apiConfigId = userConfig.id;
     }
 
+    const seed = resolveStoryboardSeed(storyboard.seed, storyboard.project.globalSeed);
+
     const result = await createSeedanceTask({
       prompt: storyboard.prompt,
       contentItems: storyboard.seedanceContentItems as object[],
       duration: storyboard.duration,
       ratio: storyboard.project.ratio,
       resolution: storyboard.project.resolution,
-      seed: storyboard.project.globalSeed,
+      seed,
     }, config);
 
     const createdTask = await prisma.generationTask.create({
@@ -74,6 +77,7 @@ export async function POST(
           "",
         status: "SUBMITTED",
         apiConfigId,
+        seed: BigInt(seed),
       },
     });
 
@@ -102,6 +106,7 @@ export async function POST(
           process.env.SEEDANCE_MODEL ||
           "",
         submitMode: "single",
+        seed,
       },
     });
 

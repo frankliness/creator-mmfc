@@ -182,6 +182,7 @@ const nodeLabel = computed(() => props.data?.label || 'LLM 文本生成')
 const showMentionsPicker = ref(false)
 const mentionsPosition = ref({ x: 0, y: 0 })
 const mentionSearchStart = ref(-1)
+const mentionSearchEnd = ref(-1)
 
 // 内部更新标志
 let isInternalUpdate = false
@@ -231,53 +232,101 @@ const createMentionChip = (node) => {
   return chip
 }
 
-// 在 contenteditable 中插入 mention chip（替换 @searchText）
-const insertMentionChipDOM = (node) => {
-  const el = systemPromptRef.value
-  if (!el) return
+const getEditableDomPoint = (editor, targetPos) => {
+  let textLength = 0
+  let point = null
 
-  // 遍历文本节点，找到最后一个 @
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
-  let lastAtNode = null
-  let lastAtOffset = -1
+  const walk = (node) => {
+    if (point) return
 
-  while (walker.nextNode()) {
-    const idx = walker.currentNode.textContent.lastIndexOf('@')
-    if (idx !== -1) {
-      lastAtNode = walker.currentNode
-      lastAtOffset = idx
+    if (node.nodeType === Node.TEXT_NODE) {
+      const nodeLength = node.textContent.length
+      if (targetPos <= textLength + nodeLength) {
+        point = {
+          node,
+          offset: Math.max(0, targetPos - textLength)
+        }
+        return
+      }
+      textLength += nodeLength
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      if (node.classList?.contains('mention-chip')) {
+        const replacement = `@[${node.dataset.nodeId || ''}]`
+        if (targetPos <= textLength + replacement.length) {
+          const parent = node.parentNode
+          point = {
+            node: parent,
+            offset: Array.prototype.indexOf.call(parent.childNodes, node) + 1
+          }
+          return
+        }
+        textLength += replacement.length
+      } else if (node.tagName === 'BR') {
+        if (targetPos <= textLength + 1) {
+          const parent = node.parentNode
+          point = {
+            node: parent,
+            offset: Array.prototype.indexOf.call(parent.childNodes, node) + 1
+          }
+          return
+        }
+        textLength += 1
+      } else {
+        for (const child of node.childNodes) {
+          walk(child)
+          if (point) return
+        }
+      }
     }
   }
 
-  if (!lastAtNode || lastAtOffset === -1) return
+  walk(editor)
+  return point || { node: editor, offset: editor.childNodes.length }
+}
 
-  const chip = createMentionChip(node)
-  const spaceNode = document.createTextNode('\u00A0')
-  const beforeText = lastAtNode.textContent.substring(0, lastAtOffset)
+// 在 contenteditable 中插入 mention chip（替换 @searchText）
+const insertMentionChipDOM = (node, label = '') => {
+  const el = systemPromptRef.value
+  if (!el) return
 
-  if (beforeText) {
-    lastAtNode.textContent = beforeText
-    lastAtNode.parentNode.insertBefore(chip, lastAtNode.nextSibling)
-    lastAtNode.parentNode.insertBefore(spaceNode, chip.nextSibling)
-  } else {
-    const parent = lastAtNode.parentNode
-    parent.insertBefore(chip, lastAtNode)
-    parent.insertBefore(spaceNode, chip.nextSibling)
-    parent.removeChild(lastAtNode)
+  const start = mentionSearchStart.value
+  if (start < 0) return
+
+  const fullText = getEditableText()
+  let end = mentionSearchEnd.value > start ? mentionSearchEnd.value : start + 1
+  const displayLabel = label || node.data?.label || node.data?.content?.slice(0, 20) || ''
+  if (displayLabel && fullText.slice(start + 1).startsWith(displayLabel)) {
+    end = start + 1 + displayLabel.length
   }
 
-  // 光标移到空格之后
+  const startPoint = getEditableDomPoint(el, start)
+  const endPoint = getEditableDomPoint(el, end)
+  const chip = createMentionChip(node)
+  const spaceNode = document.createTextNode('\u00A0')
+  const fragment = document.createDocumentFragment()
+  fragment.appendChild(chip)
+  fragment.appendChild(spaceNode)
+
   const range = document.createRange()
-  range.setStartAfter(spaceNode)
-  range.collapse(true)
+  range.setStart(startPoint.node, startPoint.offset)
+  range.setEnd(endPoint.node, endPoint.offset)
+  range.deleteContents()
+  range.insertNode(fragment)
+
+  // 光标移到空格之后
+  const caretRange = document.createRange()
+  caretRange.setStartAfter(spaceNode)
+  caretRange.collapse(true)
   const sel = window.getSelection()
   sel.removeAllRanges()
-  sel.addRange(range)
+  sel.addRange(caretRange)
 
   // 同步文本
   isInternalUpdate = true
   systemPrompt.value = getEditableText()
   lastContent.value = systemPrompt.value
+  mentionSearchStart.value = -1
+  mentionSearchEnd.value = -1
   nextTick(() => { isInternalUpdate = false })
 }
 
@@ -479,7 +528,7 @@ const handleKeydown = (e) => {
 }
 
 // Handle mention selection | 处理 @ 引用选择
-const handleMentionSelect = ({ nodeId }) => {
+const handleMentionSelect = ({ nodeId, label }) => {
   // 插入 mention chip 到 DOM
   const node = nodes.value.find(n => n.id === nodeId)
   if (!node) {
@@ -487,7 +536,7 @@ const handleMentionSelect = ({ nodeId }) => {
     return
   }
 
-  insertMentionChipDOM(node)
+  insertMentionChipDOM(node, label)
 
   // 更新 store
   updateConfig()
@@ -593,6 +642,7 @@ const handleInput = (e) => {
       // Calculate position | 计算位置
       showMentionsPicker.value = true
       mentionSearchStart.value = lastAtIndex
+      mentionSearchEnd.value = cursorPos
 
       // Get editor position | 获取 editor 位置
       const rect = editor.getBoundingClientRect()
@@ -606,6 +656,8 @@ const handleInput = (e) => {
 
   // Hide picker if conditions not met | 如果条件不满足，隐藏选择器
   showMentionsPicker.value = false
+  mentionSearchStart.value = -1
+  mentionSearchEnd.value = -1
 }
 
 // Handle blur | 处理失去焦点

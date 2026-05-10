@@ -1,8 +1,8 @@
 # MMFC Studio Canvas
 
-一个基于 Vue Flow 的可视化 AI 创作画布，当前版本默认接入 Google 官方 Gemini API：
-- 聊天走 Google OpenAI 兼容接口
-- Nano Banana 2 / Pro 生图走 Gemini 原生图片 API
+一个基于 Vue Flow 的可视化 AI 创作画布，接入 Creator MMFC 主站同源 `/api/canvas/*`：
+- 聊天、生图、图生图模型由主站 `ModelRegistry` 和 `ProviderCredential` 动态下发
+- 当前支持 Google Gemini、OpenAI / Azure OpenAI 及兼容 OpenAI 的自定义 provider
 
 ![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js)
 ![Vite](https://img.shields.io/badge/Vite-5.2-646CFF?logo=vite)
@@ -22,12 +22,13 @@
 ## ✨ 特性
 
 - 🎨 **可视化节点编排** - 基于 Vue Flow 的无限画布，支持拖拽、缩放、连接
-- 🖼️ **文生图工作流** - 支持配置提示词、模型、尺寸等参数生成图片
+- 🖼️ **文生图工作流** - 支持配置提示词、模型、比例、分辨率/质量等参数生成图片
 - 🎬 **视频生成工作流** - 支持图生视频，可设置首帧/尾帧图片
 - 🤖 **AI 提示词润色** - 一键 AI 优化提示词，提升生成质量
 - 🌓 **深色/浅色主题** - 支持主题切换，保护眼睛
 - 💾 **本地项目存储** - 项目数据本地持久化，支持多项目管理
 - ↩️ **撤销/重做** - 完整的操作历史记录
+- 🔁 **异步任务恢复** - 文生图 / 图生图任务支持刷新、关 tab 后恢复轮询
 
 ## 📦 节点类型
 
@@ -74,14 +75,13 @@ npm run build
 
 ## ⚙️ 配置
 
-首次使用需要配置 API：
+首次使用不再直接在画布前端填写 provider API Key，实际调用配置由主站侧管理后台维护：
 
-1. 点击右上角设置图标 ⚙️
-2. 填入 Google Gemini API Key
-3. Base URL 默认使用 `https://generativelanguage.googleapis.com/v1beta/openai`
-4. 选择需要使用的 Gemini / Nano Banana 模型
+1. 在 Creator MMFC 管理后台配置 `ProviderCredential`、默认模型与 `ModelRegistry`
+2. 登录主站后进入 `/ai-canvas`
+3. 画布会通过 `/api/canvas/config` 自动拉取可用模型、默认值和可选凭据
 
-注意：聊天走 Google 官方 OpenAI 兼容接口，图片生成走 Google 官方原生 Gemini Image API。
+注意：不同模型的 provider、比例和分辨率选项由主站实时下发，画布只负责展示与调用。
 
 ## 🛠️ 技术栈
 

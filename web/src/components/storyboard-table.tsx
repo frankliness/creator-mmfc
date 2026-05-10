@@ -24,6 +24,8 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -74,6 +76,7 @@ interface Storyboard {
   storyboardId: string;
   sortOrder: number;
   duration: number;
+  seed: number | null;
   prompt: string;
   assetBindings: AssetBinding[];
   seedanceContentItems: SeedanceContentItem[];
@@ -117,6 +120,8 @@ const taskStatusLabels: Record<string, string> = {
   PERSISTED: "已保存",
 };
 
+const MAX_STORYBOARD_SEED = 2147483647;
+
 function formatTime(iso: string) {
   return new Date(iso).toLocaleString("zh-CN", {
     month: "2-digit",
@@ -134,14 +139,20 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
   const [editDuration, setEditDuration] = useState(
     String(DEFAULT_MANUAL_STORYBOARD_DURATION)
   );
+  const [editSeed, setEditSeed] = useState("");
   const [editAssetBindings, setEditAssetBindings] = useState<AssetBinding[]>([]);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
-  const [previewVideo, setPreviewVideo] = useState<string | null>(null);
+  const [previewVideo, setPreviewVideo] = useState<{
+    taskId: string;
+    storyboardId: string;
+  } | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [cloning, setCloning] = useState<string | null>(null);
   const [batchDownloading, setBatchDownloading] = useState(false);
+  const [deleteCandidate, setDeleteCandidate] = useState<Storyboard | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   function toggleSelect(id: string) {
     setSelected((prev) => {
@@ -164,6 +175,7 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
     setEditingId(sb.id);
     setEditPrompt(sb.prompt);
     setEditDuration(String(sb.duration));
+    setEditSeed(sb.seed ? String(sb.seed) : "");
     setEditAssetBindings(
       Array.isArray(sb.assetBindings)
         ? sb.assetBindings.map((a) => ({ ...a }))
@@ -197,6 +209,14 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
       toast.error(MANUAL_STORYBOARD_DURATION_HINT);
       return;
     }
+    const seed = editSeed.trim() === "" ? null : Number(editSeed);
+    if (
+      seed !== null &&
+      (!Number.isInteger(seed) || seed < 1 || seed > MAX_STORYBOARD_SEED)
+    ) {
+      toast.error(`Seed 需为 1-${MAX_STORYBOARD_SEED} 的整数，或留空`);
+      return;
+    }
     setSaving(true);
 
     const normalizedBindings = editAssetBindings.map((a) => ({
@@ -218,6 +238,7 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
       body: JSON.stringify({
         prompt: editPrompt,
         duration,
+        seed,
         assetBindings: normalizedBindings,
         seedanceContentItems: normalizedItems,
       }),
@@ -229,6 +250,28 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
     }
     toast.success("已保存");
     setEditingId(null);
+    onUpdate();
+  }
+
+  async function deleteStoryboard() {
+    if (!deleteCandidate) return;
+    setDeletingId(deleteCandidate.id);
+    const res = await fetch(`/api/storyboards/${deleteCandidate.id}`, {
+      method: "DELETE",
+    });
+    setDeletingId(null);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      toast.error(data.error || "删除失败");
+      return;
+    }
+    toast.success(`已删除分镜 ${deleteCandidate.storyboardId}`);
+    setDeleteCandidate(null);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.delete(deleteCandidate.id);
+      return next;
+    });
     onUpdate();
   }
 
@@ -404,6 +447,7 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
               const task = latestTask(sb);
               const isSucceeded = sb.status === "SUCCEEDED";
               const canSubmit = ["DRAFT", "FAILED", "APPROVED"].includes(sb.status);
+              const canDelete = sb.status === "DRAFT" && (!sb.tasks || sb.tasks.length === 0);
               return (
                 <TableRow key={sb.id}>
                   <TableCell>
@@ -446,7 +490,12 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
                           size="sm"
                           variant="link"
                           className="h-auto p-0 text-xs"
-                          onClick={() => setPreviewVideo(task.id)}
+                          onClick={() =>
+                            setPreviewVideo({
+                              taskId: task.id,
+                              storyboardId: sb.storyboardId,
+                            })
+                          }
                         >
                           预览视频
                         </Button>
@@ -479,6 +528,16 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
                             {submitting === sb.id ? "..." : "提交"}
                           </Button>
                         </>
+                      )}
+                      {canDelete && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive"
+                          onClick={() => setDeleteCandidate(sb)}
+                        >
+                          删除
+                        </Button>
                       )}
                       {isSucceeded && (
                         <Button
@@ -528,6 +587,10 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
                 <div>
                   <span className="text-muted-foreground">排序：</span>
                   {detailSb.sortOrder}
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Seed：</span>
+                  {detailSb.seed ?? "—"}
                 </div>
                 <div>
                   <span className="text-muted-foreground">创建时间：</span>
@@ -627,7 +690,10 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
                               variant="outline"
                               onClick={() => {
                                 setDetailId(null);
-                                setPreviewVideo(task.id);
+                                setPreviewVideo({
+                                  taskId: task.id,
+                                  storyboardId: detailSb.storyboardId,
+                                });
                               }}
                             >
                               预览视频
@@ -675,6 +741,17 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Seed（可选）</label>
+              <Input
+                value={editSeed}
+                onChange={(e) => setEditSeed(e.target.value)}
+                inputMode="numeric"
+                placeholder="留空则使用项目 seed"
+                className="w-56"
+              />
             </div>
 
             <Separator />
@@ -749,19 +826,21 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
       <Dialog open={previewVideo !== null} onOpenChange={(open) => !open && setPreviewVideo(null)}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>视频预览</DialogTitle>
+            <DialogTitle>
+              视频预览 - 分镜 {previewVideo?.storyboardId}
+            </DialogTitle>
           </DialogHeader>
           {previewVideo && (
             <div className="space-y-3">
               <video
-                src={`/api/videos/${previewVideo}`}
+                src={`/api/videos/${previewVideo.taskId}`}
                 controls
                 autoPlay
                 className="w-full rounded-lg"
               />
               <div className="flex justify-end">
                 <a
-                  href={`/api/videos/${previewVideo}?download=1`}
+                  href={`/api/videos/${previewVideo.taskId}?download=1`}
                   download
                 >
                   <Button variant="outline" size="sm">
@@ -771,6 +850,32 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteCandidate !== null}
+        onOpenChange={(open) => !open && setDeleteCandidate(null)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>删除分镜 {deleteCandidate?.storyboardId}</DialogTitle>
+            <DialogDescription>
+              仅未提交且没有生成任务的草稿分镜可以删除。删除后不可恢复，请确认是否继续。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteCandidate(null)}>
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={deleteStoryboard}
+              disabled={deletingId === deleteCandidate?.id}
+            >
+              {deletingId === deleteCandidate?.id ? "删除中..." : "确认删除"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

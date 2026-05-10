@@ -204,11 +204,12 @@ export async function runImageTask(taskId: string): Promise<{
     }
 
     const durationMs = Date.now() - startedAt;
-    const costEstimate = estimateImageCost(
+    const costEstimate = await estimateImageCost(
       task.model,
       saved.length,
       task.size ?? undefined,
-      task.quality ?? undefined
+      task.quality ?? undefined,
+      task.callType as "canvas_image" | "canvas_image_edit"
     );
 
     // Step 6: 标记 SUCCEEDED

@@ -101,7 +101,7 @@
             :placeholder="baseUrlPlaceholder"
           />
           <div style="color: #999; font-size: 12px; margin-top: 4px">
-            可粘贴完整 endpoint URL（如 .../chat/completions），保存时自动剥后缀
+            <div v-for="line in baseUrlHelp" :key="line">{{ line }}</div>
           </div>
         </a-form-item>
         <a-form-item :label="editing ? 'API Key（留空 = 不修改）' : 'API Key'" :required="!editing">
@@ -223,6 +223,28 @@ const baseUrlPlaceholder = computed(() => {
       return "如 https://generativelanguage.googleapis.com/v1beta";
     default:
       return "如 https://api.your-provider.com/v1";
+  }
+});
+
+const baseUrlHelp = computed(() => {
+  switch (form.provider) {
+    case "openai":
+      return [
+        "OpenAI Compatible：填写 https://api.openai.com/v1",
+        "可粘贴完整 endpoint URL（如 .../chat/completions），保存时自动剥后缀",
+      ];
+    case "azure_openai":
+      return [
+        "Azure OpenAI：填写 https://<resource>.openai.azure.com",
+        "Deployment 和 API Version 请在下方独立填写，不要拼进 Base URL",
+      ];
+    case "google":
+      return ["Google Gemini：填写 https://generativelanguage.googleapis.com/v1beta"];
+    default:
+      return [
+        "Custom：需兼容 OpenAI 路径规范，推荐以 /v1 结尾",
+        "可粘贴完整 endpoint URL（如 .../chat/completions），保存时自动剥后缀",
+      ];
   }
 });
 

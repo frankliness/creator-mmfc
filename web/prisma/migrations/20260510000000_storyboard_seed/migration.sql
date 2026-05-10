@@ -1,0 +1,1 @@
+ALTER TABLE "Storyboard" ADD COLUMN "seed" INTEGER;

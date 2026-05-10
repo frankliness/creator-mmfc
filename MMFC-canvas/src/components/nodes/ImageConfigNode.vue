@@ -49,7 +49,7 @@
           </n-dropdown>
         </div>
 
-        <!-- Quality selector | 画质选择 -->
+        <!-- Quality selector | 分辨率/质量选择 -->
         <div v-if="hasQualityOptions" class="flex items-center justify-between">
           <span class="text-xs text-[var(--text-secondary)]">{{ qualityFieldLabel }}</span>
           <n-dropdown :options="qualityOptions" @select="handleQualitySelect">
@@ -60,9 +60,9 @@
           </n-dropdown>
         </div>
 
-        <!-- Size selector | 尺寸选择 -->
+        <!-- Size selector | 比例选择 -->
         <div v-if="hasSizeOptions" class="flex items-center justify-between">
-          <span class="text-xs text-[var(--text-secondary)]">尺寸</span>
+          <span class="text-xs text-[var(--text-secondary)]">比例</span>
           <div class="flex items-center gap-2">
             <n-dropdown :options="sizeOptions" @select="handleSizeSelect">
               <button
@@ -248,36 +248,35 @@ const displayModelName = computed(() => {
   return model?.label || localModel.value || '选择模型'
 })
 
-// Quality options based on model | 基于模型的画质选项
+// Quality options based on model | 基于模型的分辨率/质量选项
 const qualityOptions = computed(() => {
   return getModelQualityOptions(localModel.value)
 })
 
-// Check if model has quality options | 检查模型是否有画质选项
+// Check if model has quality options | 检查模型是否有分辨率/质量选项
 const hasQualityOptions = computed(() => {
   return qualityOptions.value && qualityOptions.value.length > 0
 })
 
-// Display quality | 显示画质
+// Display quality | 显示分辨率/质量
 const displayQuality = computed(() => {
   const option = qualityOptions.value.find(o => o.key === localQuality.value)
   return option?.label || localQuality.value || '默认'
 })
 
-const qualityFieldLabel = computed(() => currentModelConfig.value?.qualityLabel || '画质')
+const qualityFieldLabel = computed(() => '分辨率/质量')
 
-// Size options based on model and quality | 基于模型和画质的尺寸选项
+// Size options based on model and quality | 基于模型和分辨率/质量的比例选项
 const sizeOptions = computed(() => {
   return getModelSizeOptions(localModel.value, localQuality.value)
 })
 
-// Check if model has size options | 检查模型是否有尺寸选项
+// Check if model has size options | 检查模型是否有比例选项
 const hasSizeOptions = computed(() => {
-  const config = getModelConfig(localModel.value)
-  return config?.sizes && config.sizes.length > 0
+  return sizeOptions.value && sizeOptions.value.length > 0
 })
 
-// Display size with label | 显示尺寸（带标签）
+// Display size with label | 显示比例（带标签）
 const displaySize = computed(() => {
   const option = sizeOptions.value.find(o => o.key === localSize.value)
   return option?.label || localSize.value
@@ -488,12 +487,15 @@ const handleModelSelect = (key) => {
   localModel.value = key
   const config = getModelConfig(key)
 
-  // 同步 Quality 到模型默认值
-  if (config?.defaultParams?.quality) {
-    localQuality.value = config.defaultParams.quality
-  }
+  // 同步分辨率/质量到模型默认值
+  const newQualityOptions = getModelQualityOptions(key)
+  const defaultQuality =
+    config?.defaultParams?.quality ||
+    newQualityOptions.find(o => o.key === localQuality.value)?.key ||
+    newQualityOptions[0]?.key
+  if (defaultQuality) localQuality.value = defaultQuality
 
-  // 同步 Size 到模型默认值
+  // 同步比例到模型默认值
   const newSizeOptions = getModelSizeOptions(key, localQuality.value)
   let defaultSize = config?.defaultParams?.size
 

@@ -54,6 +54,7 @@ export async function POST(
       storyboardId: newStoryboardId,
       sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
       duration: source.duration,
+      seed: source.seed,
       prompt: source.prompt,
       assetBindings: source.assetBindings as object,
       seedanceContentItems: source.seedanceContentItems as object,

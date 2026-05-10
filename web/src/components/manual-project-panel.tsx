@@ -35,6 +35,8 @@ import {
 } from "@/lib/storyboard-duration";
 import { toast } from "sonner";
 
+const MAX_STORYBOARD_SEED = 2147483647;
+
 interface ProjectShape {
   id: string;
   name: string;
@@ -80,6 +82,7 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
   const [newDuration, setNewDuration] = useState(
     String(DEFAULT_MANUAL_STORYBOARD_DURATION)
   );
+  const [newSeed, setNewSeed] = useState("");
   const [newAssets, setNewAssets] = useState<AssetRow[]>([]);
   const [savingSb, setSavingSb] = useState(false);
 
@@ -140,6 +143,7 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
   function openAddStoryboard() {
     setNewPrompt("");
     setNewDuration(String(DEFAULT_MANUAL_STORYBOARD_DURATION));
+    setNewSeed("");
     setNewAssets([]);
     setAddOpen(true);
   }
@@ -162,6 +166,14 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
       toast.error(MANUAL_STORYBOARD_DURATION_HINT);
       return;
     }
+    const seed = newSeed.trim() === "" ? null : Number(newSeed);
+    if (
+      seed !== null &&
+      (!Number.isInteger(seed) || seed < 1 || seed > MAX_STORYBOARD_SEED)
+    ) {
+      toast.error(`Seed 需为 1-${MAX_STORYBOARD_SEED} 的整数，或留空`);
+      return;
+    }
     setSavingSb(true);
     const res = await fetch(`/api/projects/${project.id}/storyboards`, {
       method: "POST",
@@ -169,6 +181,7 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
       body: JSON.stringify({
         prompt: newPrompt,
         duration,
+        seed,
         assetBindings: newAssets,
       }),
     });
@@ -320,6 +333,16 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
                 onChange={(e) => setNewPrompt(e.target.value)}
                 rows={12}
                 className="font-mono text-xs"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Seed（可选）</Label>
+              <Input
+                value={newSeed}
+                onChange={(e) => setNewSeed(e.target.value)}
+                inputMode="numeric"
+                placeholder="留空则使用项目 seed"
+                className="w-56"
               />
             </div>
             <Separator />

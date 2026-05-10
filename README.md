@@ -1,6 +1,6 @@
 # Creator MMFC
 
-**版本：1.5.1**
+**版本：1.5.2**
 
 面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，可选 **GCS** 做对象存储。
 
@@ -52,6 +52,31 @@
 - Prompt 模板管理：版本历史、回滚、Schema 测试、按 provider 适配
 - 凭据池管理：CRUD、连通性探测、主用凭据、用途/模型粒度适用范围
 - 默认模型管理、模型注册表、用户行为日志、审计日志、Token 统计
+
+---
+
+### 版本 1.5.2 更新摘要
+
+**主要优化：补齐分镜 seed、草稿删除、画布图片参数语义与动态计费链路**
+
+#### 1. 工作台分镜体验补齐
+
+- 视频预览弹窗标题增加分镜号，关闭弹窗后仍能明确刚刚查看的是哪一镜
+- `DRAFT` 且从未生成过任务的分镜支持前端确认后删除；后端新增 `DELETE /api/storyboards/[id]` 做归属、状态、任务数强校验
+- 分镜新增可选 `seed` 字段；提交视频时按 `storyboard.seed ?? project.globalSeed ?? randomSeed` 解析实际 seed，并在创建 `GenerationTask` 时立即落库
+
+#### 2. 画布图片模型参数与输入修复
+
+- 修复 TextNode、LLMConfigNode 中 `@图片` 后紧跟文字时，mention 插入吞掉后续文本的问题
+- 画布图片模型统一使用“比例 / 分辨率(质量)”语义，继续兼容现有 `size` / `quality` 字段
+- `MMFC-canvas` 在未配置模型专属选项时也会回退默认比例与分辨率选项，避免下拉为空
+
+#### 3. Admin 模型配置与成本统计对齐
+
+- Provider 凭据页 Base URL 增加分 provider 的明确格式说明（OpenAI Compatible / Azure OpenAI / Google Gemini / Custom）
+- ModelRegistry 继续使用 `sizes` / `qualities` 存储，但 UI 文案明确为 ratios / resolutions，并支持 `capabilities.pricing`
+- 画布 chat / image 成本估算优先读取 ModelRegistry `capabilities.pricing`，找不到再 fallback 到内置价表
+- `CanvasAiCall` 新增 `costEstimate` 字段；chat 在上游未返回 usage 时会补 input/output token 估算
 
 ---
 
@@ -281,7 +306,7 @@ docker compose up -d --build
 5. `MMFC-canvas/src/views/Canvas.vue` 仍有项目复制 / 删除相关 `TODO`，说明画布项目操作闭环还不完整，建议补齐并加端到端验证。
 6. 根仓库仍有 `tmp/`、`.claude/` 等本地工作痕迹未纳入忽略规则；本次未自动入库，但建议后续明确 `.gitignore` 策略，避免日志和草稿误提交。
 
-### 升级已有部署（1.1.x / 1.2.0 / 1.3.0 / 1.4.0 / 1.5.0 → 1.5.1）
+### 升级已有部署（1.1.x / 1.2.0 / 1.3.0 / 1.4.0 / 1.5.0 / 1.5.1 → 1.5.2）
 
 1. 拉取最新代码
 2. 执行数据库迁移（在 `web/` 目录）：
@@ -293,6 +318,8 @@ docker compose up -d --build
    - `20260507000000_provider_credential`（1.3.0：ProviderCredential 表 + UserApiConfig.credentialId）
    - `20260508000000_canvas_image_task`（1.4.0：CanvasImageTask 异步任务表）
    - `20260509060000_provider_credential_scopes`（1.5.0：ProviderCredential 的用途 / 模型作用域）
+   - `20260510000000_storyboard_seed`（1.5.2：Storyboard.seed，可按分镜覆盖项目 seed）
+   - `20260510001000_canvas_ai_call_cost`（1.5.2：CanvasAiCall.costEstimate）
 3. 执行 seed 补充初始数据（首次升级需要）：
    ```bash
    cd admin && npx ts-node prisma/seed.ts

@@ -114,7 +114,12 @@ export const getModelQualityOptions = (modelKey) => {
   const modelConfig = getModelConfigHook()
   const model = modelConfig?.getImageModel?.(modelKey)
              || IMAGE_MODELS.find(m => m.key === modelKey)
-  return model?.qualities || []
+  if (!model?.qualities || model.qualities.length === 0) return SEEDREAM_QUALITY_OPTIONS
+  return model.qualities.map(quality => {
+    if (typeof quality === 'object' && quality?.key) return quality
+    const option = SEEDREAM_QUALITY_OPTIONS.find(o => o.key === quality)
+    return option || { label: String(quality), key: quality }
+  })
 }
 
 /**

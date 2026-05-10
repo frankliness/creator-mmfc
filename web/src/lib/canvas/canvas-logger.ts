@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { logTokenUsage } from "@/lib/token-logger";
 import { logUserAction } from "@/lib/user-action-logger";
@@ -39,12 +40,22 @@ export async function logCanvasCall(params: CanvasCallLogParams): Promise<void> 
   const imageCount = params.imageCount ?? 0;
 
   let costEstimate: number | null = null;
-  if (params.status === "success") {
-    if (params.callType === "canvas_chat") {
-      costEstimate = estimateChatCost(params.model, inputTokens, outputTokens);
-    } else if (imageCount > 0) {
-      costEstimate = estimateImageCost(params.model, imageCount, params.size, params.quality);
+  try {
+    if (params.status === "success") {
+      if (params.callType === "canvas_chat") {
+        costEstimate = await estimateChatCost(params.model, inputTokens, outputTokens);
+      } else if (imageCount > 0) {
+        costEstimate = await estimateImageCost(
+          params.model,
+          imageCount,
+          params.size,
+          params.quality,
+          params.callType
+        );
+      }
     }
+  } catch (err) {
+    console.error("[canvas-logger] cost estimate failed:", err);
   }
 
   // provider 字段：保持 "gemini-canvas" 作为画布通道的稳定标识，避免破坏旧报表的过滤；
@@ -64,6 +75,10 @@ export async function logCanvasCall(params: CanvasCallLogParams): Promise<void> 
         totalTokens,
         imageCount,
         durationMs: params.durationMs ?? null,
+        costEstimate:
+          typeof costEstimate === "number" && Number.isFinite(costEstimate)
+            ? new Prisma.Decimal(costEstimate.toFixed(6))
+            : null,
         status: params.status,
         error: params.error ?? null,
       },

@@ -50,7 +50,7 @@ interface UsageAccumulator {
 function makeUsageParser(): {
   accept: (jsonChunk: string) => void;
   acceptDelta: (delta: string) => void;
-  finalize: () => UsageAccumulator;
+  finalize: (fallbackInputTokens: bigint) => UsageAccumulator;
 } {
   const ZERO = BigInt(0);
   let usage: UsageAccumulator = { inputTokens: ZERO, outputTokens: ZERO, totalTokens: ZERO };
@@ -64,10 +64,15 @@ function makeUsageParser(): {
           usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
         };
         if (obj.usage) {
+          const inputTokens = BigInt(obj.usage.prompt_tokens ?? 0);
+          const outputTokens = BigInt(obj.usage.completion_tokens ?? 0);
           usage = {
-            inputTokens: BigInt(obj.usage.prompt_tokens ?? 0),
-            outputTokens: BigInt(obj.usage.completion_tokens ?? 0),
-            totalTokens: BigInt(obj.usage.total_tokens ?? 0),
+            inputTokens,
+            outputTokens,
+            totalTokens:
+              obj.usage.total_tokens != null
+                ? BigInt(obj.usage.total_tokens)
+                : inputTokens + outputTokens,
           };
           usageReceived = true;
         }
@@ -78,14 +83,14 @@ function makeUsageParser(): {
     acceptDelta(delta) {
       outputCharCount += delta.length;
     },
-    finalize() {
-      if (!usageReceived && outputCharCount > 0) {
+    finalize(fallbackInputTokens) {
+      if (!usageReceived) {
         // Gemini OpenAI 兼容端点理论上会回 usage，但若缺失就用字符数粗估（约 4 字符 ≈ 1 token）
-        const approx = BigInt(Math.max(1, Math.round(outputCharCount / 4)));
+        const approx = BigInt(Math.max(outputCharCount > 0 ? 1 : 0, Math.round(outputCharCount / 4)));
         usage = {
-          inputTokens: ZERO,
+          inputTokens: fallbackInputTokens,
           outputTokens: approx,
-          totalTokens: approx,
+          totalTokens: fallbackInputTokens + approx,
         };
       }
       return usage;
@@ -164,6 +169,27 @@ async function normalizeMessages(
   );
 }
 
+function estimateMessageInputTokens(
+  messages: Awaited<ReturnType<typeof normalizeMessages>>
+): bigint {
+  let tokens = 0;
+  for (const message of messages) {
+    tokens += 4;
+    if (typeof message.content === "string") {
+      tokens += Math.ceil(message.content.length / 4);
+      continue;
+    }
+    for (const part of message.content) {
+      if (part.type === "text") {
+        tokens += Math.ceil(part.text.length / 4);
+      } else if (part.type === "image_url") {
+        tokens += 1024;
+      }
+    }
+  }
+  return BigInt(Math.max(0, tokens));
+}
+
 export async function POST(req: NextRequest) {
   const auth = await requireCanvasUser();
   if (!auth.ok) return authError(auth);
@@ -227,6 +253,7 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ error: message }, { status: 400 });
   }
+  const fallbackInputTokens = estimateMessageInputTokens(normalizedMessages);
 
   const upstream = await fetch(upstreamUrl, {
     method: "POST",
@@ -295,7 +322,7 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         controller.error(err);
       } finally {
-        const usage = usageParser.finalize();
+        const usage = usageParser.finalize(fallbackInputTokens);
         await logCanvasCall({
           userId: auth.user.id,
           projectId: parsed.data.projectId ?? null,

@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { getTaskStatus } from "../lib/seedance";
 import {
   buildVideoBasename,
@@ -59,23 +59,28 @@ async function pollTasks() {
       if (result.status === "succeeded") {
         console.log(`[worker] task ${task.arkTaskId} succeeded`);
 
+        const taskUpdate: Prisma.GenerationTaskUpdateInput = {
+          status: "SUCCEEDED",
+          arkStatus: result.status,
+          videoUrl: result.content?.video_url || null,
+          resolution: result.resolution || null,
+          ratio: result.ratio || null,
+          duration: result.duration || null,
+          completionTokens: result.usage?.completion_tokens
+            ? BigInt(result.usage.completion_tokens)
+            : null,
+          totalTokens: result.usage?.total_tokens
+            ? BigInt(result.usage.total_tokens)
+            : null,
+        };
+
+        if (result.seed) {
+          taskUpdate.seed = BigInt(result.seed);
+        }
+
         await prisma.generationTask.update({
           where: { id: task.id },
-          data: {
-            status: "SUCCEEDED",
-            arkStatus: result.status,
-            videoUrl: result.content?.video_url || null,
-            seed: result.seed ? BigInt(result.seed) : null,
-            resolution: result.resolution || null,
-            ratio: result.ratio || null,
-            duration: result.duration || null,
-            completionTokens: result.usage?.completion_tokens
-              ? BigInt(result.usage.completion_tokens)
-              : null,
-            totalTokens: result.usage?.total_tokens
-              ? BigInt(result.usage.total_tokens)
-              : null,
-          },
+          data: taskUpdate,
         });
 
         await logUserAction({

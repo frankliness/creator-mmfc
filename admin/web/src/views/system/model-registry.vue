@@ -118,20 +118,29 @@
 
         <a-row :gutter="16">
           <a-col :span="12">
-            <a-form-item label="可选 Sizes（JSON array，可空）">
+            <a-form-item label="可选比例 ratios（存入 sizes，JSON array，可空）">
               <a-textarea v-model:value="sizesJson" :rows="2" placeholder='["1:1","16:9","9:16"]' />
             </a-form-item>
           </a-col>
           <a-col :span="12">
-            <a-form-item label="可选 Qualities（JSON array，可空）">
+            <a-form-item label="可选分辨率/质量 resolutions（存入 qualities，JSON array，可空）">
               <a-textarea
                 v-model:value="qualitiesJson"
                 :rows="2"
-                placeholder='[{"label":"HD","key":"hd"}]'
+                placeholder='[{"label":"High","key":"high"}]'
               />
             </a-form-item>
           </a-col>
         </a-row>
+
+        <a-form-item label="Pricing（写入 capabilities.pricing，JSON，可空）">
+          <a-textarea
+            v-model:value="pricingJson"
+            :rows="3"
+            style="font-family: monospace"
+            placeholder='文本：{"inputPer1M":2,"outputPer1M":8}；图片：{"perImage":{"high":0.167}}'
+          />
+        </a-form-item>
 
         <a-form-item label="默认参数 defaultParams（JSON，可空）">
           <a-input
@@ -213,6 +222,7 @@ const capabilitiesJson = ref("");
 const sizesJson = ref("");
 const qualitiesJson = ref("");
 const defaultParamsJson = ref("");
+const pricingJson = ref("");
 
 watch(advancedJson, (v) => {
   if (v) {
@@ -282,6 +292,7 @@ function resetForm() {
   sizesJson.value = "";
   qualitiesJson.value = "";
   defaultParamsJson.value = "";
+  pricingJson.value = "";
 }
 
 function openCreate() {
@@ -313,6 +324,12 @@ function openEdit(record: ModelEntry) {
   sizesJson.value = record.sizes ? JSON.stringify(record.sizes) : "";
   qualitiesJson.value = record.qualities ? JSON.stringify(record.qualities) : "";
   defaultParamsJson.value = record.defaultParams ? JSON.stringify(record.defaultParams) : "";
+  pricingJson.value =
+    record.capabilities &&
+    typeof record.capabilities === "object" &&
+    "pricing" in record.capabilities
+      ? JSON.stringify((record.capabilities as Record<string, unknown>).pricing, null, 2)
+      : "";
   showDialog.value = true;
 }
 
@@ -339,8 +356,17 @@ async function submit() {
     if (qualitiesJson.value.trim()) qualities = JSON.parse(qualitiesJson.value);
     if (defaultParamsJson.value.trim()) defaultParams = JSON.parse(defaultParamsJson.value);
   } catch {
-    message.error("Sizes/Qualities/DefaultParams JSON 格式错误");
+    message.error("Ratios/Resolutions/DefaultParams JSON 格式错误");
     return;
+  }
+
+  if (pricingJson.value.trim()) {
+    try {
+      caps.pricing = JSON.parse(pricingJson.value);
+    } catch {
+      message.error("Pricing JSON 格式错误");
+      return;
+    }
   }
 
   if (form.providers.length === 0) {

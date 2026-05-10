@@ -60,6 +60,7 @@ model Storyboard {
   storyboardId         String
   sortOrder            Int
   duration             Int
+  seed                 Int?
   prompt               String           @db.Text
   assetBindings        Json
   seedanceContentItems Json
@@ -414,6 +415,7 @@ model CanvasAiCall {
   totalTokens  BigInt         @default(0)
   imageCount   Int            @default(0)
   durationMs   Int?
+  costEstimate Decimal?       @db.Decimal(10, 6)
   status       String
   error        String?        @db.Text
   createdAt    DateTime       @default(now())

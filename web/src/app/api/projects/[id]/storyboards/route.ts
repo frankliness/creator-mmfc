@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { nextSequentialStoryboardId } from "@/lib/storyboard-id";
 import { isValidManualStoryboardDuration } from "@/lib/storyboard-duration";
+import { MAX_STORYBOARD_SEED } from "@/lib/storyboard-seed";
 import { logUserAction } from "@/lib/user-action-logger";
 import { z } from "zod";
 
@@ -18,6 +19,13 @@ const createBodySchema = z.object({
       asset_uri: z.string(),
     })
   ),
+  seed: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_STORYBOARD_SEED)
+    .nullable()
+    .optional(),
 });
 
 export async function POST(
@@ -84,6 +92,7 @@ export async function POST(
       prompt: parsed.data.prompt,
       assetBindings: normalizedBindings,
       seedanceContentItems: contentItems,
+      seed: parsed.data.seed ?? null,
       status: "DRAFT",
     },
   });
@@ -102,6 +111,7 @@ export async function POST(
     metadata: {
       storyboardCode: created.storyboardId,
       duration: created.duration,
+      seed: created.seed,
     },
   });
 
