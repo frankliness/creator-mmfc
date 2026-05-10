@@ -403,6 +403,7 @@ const getConnectedInputs = () => {
       }
     }
   }
+  const mentionedImageData = new Set(mentionsRefImages.map(item => item.imageData))
 
   // 2. Get edge-connected ImageNodes | 获取边连接的 ImageNode
   const connectedEdges = edges.value.filter(e => e.target === props.id)
@@ -416,6 +417,7 @@ const getConnectedInputs = () => {
       // Prefer base64, fallback to url | 优先使用 base64，回退到 url
       const imageData = sourceNode.data?.base64 || sourceNode.data?.url
       if (imageData) {
+        if (mentionedImageData.has(imageData)) continue
         // Get order from edge data, default to 1 | 从边数据获取顺序，默认为1
         // Add offset of @ mentions count | 加上 @ 提及图片数量的偏移
         const baseOrder = edge.data?.imageOrder || 1

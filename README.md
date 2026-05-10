@@ -1,6 +1,6 @@
 # Creator MMFC
 
-**版本：1.5.0**
+**版本：1.5.1**
 
 面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，可选 **GCS** 做对象存储。
 
@@ -52,6 +52,22 @@
 - Prompt 模板管理：版本历史、回滚、Schema 测试、按 provider 适配
 - 凭据池管理：CRUD、连通性探测、主用凭据、用途/模型粒度适用范围
 - 默认模型管理、模型注册表、用户行为日志、审计日志、Token 统计
+
+---
+
+### 版本 1.5.1 更新摘要
+
+**主要修复：画布图生图在 `gpt-image-2` 路径下的两处兼容问题**
+
+#### 1. 修复模型路由与多参考图提交兼容性
+
+- 统一 `canvas_image_edit` 下 `gpt-image-2` 的模型 key，避免图生图任务错误回退到 Gemini `generateContent`
+- `web/src/lib/llm/image.ts` 在多参考图时改为提交 `image[]`，兼容当前 Azure/OpenAI 网关对 multipart 数组参数的要求
+
+#### 2. 修复画布 `@图片` 引用导致的重复参考图
+
+- `MMFC-canvas/src/components/nodes/ImageConfigNode.vue` 在汇总 `@` 引用图片和边连接图片时增加去重
+- 避免同一 `CanvasAsset` 被重复提交两次，引发 `Duplicate parameter: 'image'` 错误
 
 ---
 
@@ -265,7 +281,7 @@ docker compose up -d --build
 5. `MMFC-canvas/src/views/Canvas.vue` 仍有项目复制 / 删除相关 `TODO`，说明画布项目操作闭环还不完整，建议补齐并加端到端验证。
 6. 根仓库仍有 `tmp/`、`.claude/` 等本地工作痕迹未纳入忽略规则；本次未自动入库，但建议后续明确 `.gitignore` 策略，避免日志和草稿误提交。
 
-### 升级已有部署（1.1.x / 1.2.0 / 1.3.0 / 1.4.0 → 1.5.0）
+### 升级已有部署（1.1.x / 1.2.0 / 1.3.0 / 1.4.0 / 1.5.0 → 1.5.1）
 
 1. 拉取最新代码
 2. 执行数据库迁移（在 `web/` 目录）：

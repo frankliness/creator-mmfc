@@ -197,13 +197,12 @@ async function generateGptImageEdit(
   form.append('quality', quality)
   if (config.provider !== 'azure_openai') form.append('model', input.model)
 
-  // OpenAI gpt-image-1 image edit：多图通过重复 'image' 字段传，不是 'image[]'
-  // (gpt-image-1 上限 16 张，总大小 50MB)
   const refs = input.refImages ?? []
+  const imageField = refs.length > 1 ? 'image[]' : 'image'
   refs.forEach((ref, i) => {
     const buf = Buffer.from(ref.data, 'base64')
     const blob = new Blob([buf], { type: ref.mimeType || 'image/png' })
-    form.append('image', blob, `ref-${i}.png`)
+    form.append(imageField, blob, `ref-${i}.png`)
   })
 
   const { url, authHeaders } = buildImageEndpoint(config, input.model, 'edits')
