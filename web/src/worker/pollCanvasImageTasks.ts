@@ -16,6 +16,8 @@ import {
   getCanvasImageDefaultUserConcurrency,
   getCanvasImageGlobalConcurrency,
   getCanvasImageTaskTimeoutMs,
+  getCanvasImageUserShareCapPct,
+  getCanvasImageZombieGraceMs,
   getUsersCanvasImageConcurrency,
 } from "../lib/canvas/concurrency-config";
 
@@ -26,8 +28,11 @@ const PENDING_SCAN_LIMIT = parseInt(
 
 /** 启动时回收上次进程残留的 RUNNING 行（崩溃 / kill -9 留下来的） */
 export async function reclaimZombies(prisma: PrismaClient) {
-  const taskTimeoutMs = await getCanvasImageTaskTimeoutMs();
-  const cutoff = new Date(Date.now() - taskTimeoutMs * 2);
+  const [taskTimeoutMs, graceMs] = await Promise.all([
+    getCanvasImageTaskTimeoutMs(),
+    getCanvasImageZombieGraceMs(),
+  ]);
+  const cutoff = new Date(Date.now() - taskTimeoutMs - graceMs);
   const result = await prisma.canvasImageTask.updateMany({
     where: {
       status: "RUNNING",
@@ -44,22 +49,62 @@ export async function reclaimZombies(prisma: PrismaClient) {
   }
 }
 
-/** 单次 tick：按剩余槽位启动 PENDING；不等待任务完成，下一 tick 持续补位。 */
+/** 每个 tick 兜底：把 RUNNING 超过 timeout + grace 的任务判 FAILED，释放槽位。 */
+async function sweepTimedOutTasks(
+  prisma: PrismaClient,
+  taskTimeoutMs: number,
+  graceMs: number
+) {
+  const cutoff = new Date(Date.now() - taskTimeoutMs - graceMs);
+  const result = await prisma.canvasImageTask.updateMany({
+    where: {
+      status: "RUNNING",
+      startedAt: { lt: cutoff },
+    },
+    data: {
+      status: "FAILED",
+      error: `任务超过最长执行时间（${Math.round(taskTimeoutMs / 1000)}s），已自动失败`,
+      finishedAt: new Date(),
+    },
+  });
+  if (result.count > 0) {
+    console.warn(`[canvas-image-worker] sweeper failed ${result.count} timed-out task(s)`);
+  }
+}
+
+/** 单次 tick：先回收超时任务，再按剩余槽位启动 PENDING；不等待任务完成，下一 tick 持续补位。 */
 export async function pollCanvasImageTasks(prisma: PrismaClient) {
-  const [globalLimit, defaultUserLimit, runningTotal, runningByUser] =
-    await Promise.all([
-      getCanvasImageGlobalConcurrency(),
-      getCanvasImageDefaultUserConcurrency(),
-      prisma.canvasImageTask.count({ where: { status: "RUNNING" } }),
-      prisma.canvasImageTask.groupBy({
-        by: ["userId"],
-        where: { status: "RUNNING" },
-        _count: { _all: true },
-      }),
-    ]);
+  const [
+    globalLimit,
+    defaultUserLimit,
+    taskTimeoutMs,
+    graceMs,
+    userSharePct,
+  ] = await Promise.all([
+    getCanvasImageGlobalConcurrency(),
+    getCanvasImageDefaultUserConcurrency(),
+    getCanvasImageTaskTimeoutMs(),
+    getCanvasImageZombieGraceMs(),
+    getCanvasImageUserShareCapPct(),
+  ]);
+
+  // tick 开头先扫一遍：把 timeout + grace 仍未结束的 RUNNING 任务判 FAILED，释放槽位。
+  await sweepTimedOutTasks(prisma, taskTimeoutMs, graceMs);
+
+  const [runningTotal, runningByUser] = await Promise.all([
+    prisma.canvasImageTask.count({ where: { status: "RUNNING" } }),
+    prisma.canvasImageTask.groupBy({
+      by: ["userId"],
+      where: { status: "RUNNING" },
+      _count: { _all: true },
+    }),
+  ]);
 
   const availableGlobal = Math.max(0, globalLimit - runningTotal);
   if (availableGlobal === 0) return;
+
+  // 单用户最多占用 globalLimit * userSharePct%，至少 1 个槽，防止一人独占全局。
+  const userShareCap = Math.max(1, Math.floor((globalLimit * userSharePct) / 100));
 
   const pending = await prisma.canvasImageTask.findMany({
     where: { status: "PENDING" },
@@ -81,7 +126,8 @@ export async function pollCanvasImageTasks(prisma: PrismaClient) {
     if (selected.length >= availableGlobal) break;
     const userRunning = runningCountByUser.get(task.userId) ?? 0;
     const userLimit = userLimits.get(task.userId) ?? defaultUserLimit;
-    if (userRunning >= userLimit) continue;
+    const effectiveLimit = Math.min(userLimit, userShareCap);
+    if (userRunning >= effectiveLimit) continue;
 
     selected.push(task);
     runningCountByUser.set(task.userId, userRunning + 1);
@@ -90,7 +136,7 @@ export async function pollCanvasImageTasks(prisma: PrismaClient) {
   if (selected.length === 0) return;
 
   console.log(
-    `[canvas-image-worker] starting ${selected.length} task(s), global=${runningTotal + selected.length}/${globalLimit}, per-user-default=${defaultUserLimit}`
+    `[canvas-image-worker] starting ${selected.length} task(s), global=${runningTotal + selected.length}/${globalLimit}, per-user-default=${defaultUserLimit}, user-share-cap=${userShareCap}`
   );
 
   for (const { id } of selected) {

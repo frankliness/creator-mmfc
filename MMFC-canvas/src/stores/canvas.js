@@ -4,6 +4,7 @@
  */
 import { ref, watch } from 'vue'
 import { updateProjectCanvas, getProjectCanvas, fetchProjectDetail } from './projects'
+import { listImageTasks } from '../api/image'
 import { IMAGE_MODELS, VIDEO_MODELS, CHAT_MODELS, DEFAULT_IMAGE_MODEL, DEFAULT_VIDEO_MODEL, DEFAULT_CHAT_MODEL } from '../config/models'
 
 // Node ID counter | 节点ID计数器
@@ -521,6 +522,57 @@ export const loadProject = async (projectId) => {
     autoSaveEnabled = true
     isRestoring = false
   }, 100)
+
+  // 异步把"画布加载前已提交、但 activeTaskId 没来得及落盘"的生图任务挂回对应 ImageNode。
+  // 失败不阻塞 loadProject 主流程；ImageNode 的 watch(activeTaskId) 会自动开始轮询。
+  rehydrateActiveImageTasks(projectId).catch((err) => {
+    console.warn('[canvas] rehydrate active image tasks failed:', err)
+  })
+}
+
+/**
+ * 把后端仍在 PENDING/RUNNING 的生图任务，重新挂回画布对应的 ImageNode。
+ * 适用于：用户跨设备/跨 tab 重新打开项目，或上次提交后 autosave 还没把 activeTaskId 落盘就刷新了。
+ *
+ * 匹配逻辑：task.sourceNodeId === imageNode.id（ImageConfigNode 提交时已把 imageNodeId 作为 sourceNodeId 传给后端）。
+ * 仅当 ImageNode 还没有 url，并且 activeTaskId 缺失或与 task.id 不一致时才覆盖。
+ */
+export const rehydrateActiveImageTasks = async (projectId) => {
+  if (!projectId) return
+  const resp = await listImageTasks({ projectId, status: 'active' })
+  const tasks = Array.isArray(resp?.tasks) ? resp.tasks : []
+  if (tasks.length === 0) return
+
+  const nodeById = new Map(nodes.value.map((n) => [n.id, n]))
+  let attached = 0
+
+  for (const task of tasks) {
+    if (!task?.sourceNodeId || !task?.id) continue
+    const node = nodeById.get(task.sourceNodeId)
+    if (!node || node.type !== 'image') continue
+    // 已经有结果或已经挂上同一个 task，跳过
+    if (node.data?.url) continue
+    if (node.data?.activeTaskId === task.id) continue
+
+    const idx = nodes.value.findIndex((n) => n.id === node.id)
+    if (idx === -1) continue
+    nodes.value[idx] = {
+      ...node,
+      data: {
+        ...node.data,
+        loading: true,
+        activeTaskId: task.id,
+        activeTaskInfo: { status: task.status ?? null, queuePosition: null },
+        error: null
+      }
+    }
+    attached += 1
+  }
+
+  if (attached > 0) {
+    console.log(`[canvas] rehydrated ${attached} active image task(s)`)
+    bumpMutation()
+  }
 }
 
 /**

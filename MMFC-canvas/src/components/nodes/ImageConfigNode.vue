@@ -659,11 +659,14 @@ const handleGenerate = async (mode = 'auto') => {
 
   try {
     // Build request params | 构建请求参数
+    // sourceNodeId 传输出 ImageNode 的 id；任务表会落库这个字段，
+    // 画布在异设备/异 tab 重新打开时可据此把任务挂回对应节点（rehydrateActiveImageTasks）。
     const params = {
       model: localModel.value,
       prompt: prompt,
       size: localSize.value,
       quality: localQuality.value,
+      sourceNodeId: imageNodeId,
       n: 1
     }
 
@@ -678,7 +681,17 @@ const handleGenerate = async (mode = 'auto') => {
       onTaskCreated: (task) => {
         updateNode(imageNodeId, {
           loading: true,
-          activeTaskId: task.taskId
+          activeTaskId: task.taskId,
+          activeTaskInfo: { status: 'PENDING', queuePosition: null }
+        })
+      },
+      // 每次轮询把 status / queuePosition 透传给 ImageNode，让 loading 文案展示队列位置
+      onProgress: (task) => {
+        updateNode(imageNodeId, {
+          activeTaskInfo: {
+            status: task?.status ?? null,
+            queuePosition: task?.queuePosition ?? null
+          }
         })
       }
     })
@@ -689,6 +702,7 @@ const handleGenerate = async (mode = 'auto') => {
         url: result[0].url,
         loading: false,
         activeTaskId: null,
+        activeTaskInfo: null,
         error: null,
         label: '文生图',
         model: localModel.value,
@@ -704,6 +718,7 @@ const handleGenerate = async (mode = 'auto') => {
     updateNode(imageNodeId, {
       loading: false,
       activeTaskId: null,
+      activeTaskInfo: null,
       error: err.message || '生成失败',
       updatedAt: Date.now()
     })
