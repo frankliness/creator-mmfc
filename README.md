@@ -1,6 +1,6 @@
 # Creator MMFC
 
-**版本：1.5.2**
+**版本：1.5.3**
 
 面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，可选 **GCS** 做对象存储。
 
@@ -52,6 +52,43 @@
 - Prompt 模板管理：版本历史、回滚、Schema 测试、按 provider 适配
 - 凭据池管理：CRUD、连通性探测、主用凭据、用途/模型粒度适用范围
 - 默认模型管理、模型注册表、用户行为日志、审计日志、Token 统计
+
+---
+
+### 版本 1.5.3 更新摘要
+
+**主要优化：画布生图并发调度与轮询体验全方位升级**
+
+#### 1. 调度参数全面调优
+
+- 默认全局生图并发由 `2` 提升至 `15`，默认单用户并发由 `5` 收紧到 `3`，默认任务超时由 `10min` 提升到 `30min`，与实际 provider 表现对齐
+- 新增 `canvas_image_user_share_cap_pct`（默认 `40`）：单用户最多占用 `globalLimit × pct%` 槽位，防止一人独占全局阻塞其他用户
+- 新增 `canvas_image_zombie_grace_ms`（默认 `5min`）：统一控制僵尸回收与 sweeper 的宽限窗口
+- 所有参数支持 DB（admin 后台 UI）或 `WORKER_CANVAS_IMAGE_*` 环境变量两路覆盖
+
+#### 2. Worker 健壮性增强
+
+- 启动僵尸回收 cutoff 由 `timeout × 2` 改为 `timeout + grace`，崩溃后恢复时间从最长 2 小时压缩到 35 分钟左右
+- 每个 tick 新增 `sweepTimedOutTasks` 兜底，即使 `Promise.race` 漏触发，超时任务也会在 `timeout + grace` 内被释放
+- 拣选逻辑加入 `userShareCap` 硬上限，单用户实际占用受 `min(userLimit, shareCap)` 双重约束
+
+#### 3. 前端轮询节奏与体验
+
+- 客户端轮询改为三段指数退避：`<3min → 2s`，`3-10min → 5s`，`>10min → 10s`，长任务下请求量减少约 70%
+- 客户端 budget 改为对齐后端 `timeout + grace`，避免"前端先报超时但后端仍在跑"的体验割裂
+- ImageNode loading 文案根据 `task.status` 与 `queuePosition` 动态展示"排队中（本人第 X，全平台第 Y）"
+- `GET /api/canvas/images/tasks/[id]` 在 PENDING 时返回 `queuePosition: { global, user }`，仅当前用户视角，无隐私泄漏
+
+#### 4. 跨设备/跨 tab 任务恢复
+
+- 画布加载完成后调用 `listImageTasks` 自动把后端仍 PENDING/RUNNING 的任务挂回对应 ImageNode（按 `sourceNodeId` 匹配）
+- ImageConfigNode 提交时回传 `sourceNodeId: imageNodeId`，闭环 rehydrate 链路
+- 覆盖边缘场景：autosave 还未把 `activeTaskId` 落盘前刷新、A 浏览器提交 B 浏览器打开等
+
+#### 5. Admin 面板补齐
+
+- 系统配置页"画布生图调度"卡片新增"单用户全局占比上限（%）"与"僵尸回收宽限（分钟）"两个输入框，附 tooltip 说明
+- 默认 fallback 与后端 `concurrency-config.ts` 保持单一真实来源（15 / 3 / 30min / 40 / 5min）
 
 ---
 

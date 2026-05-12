@@ -116,7 +116,7 @@
             <img src="../../assets/loading.webp" alt="Loading" class="w-14 h-12" />
           </div>
 
-          <span class="text-sm text-white font-medium relative z-10">创作中</span>
+          <span class="text-sm text-white font-medium relative z-10">{{ loadingLabel }}</span>
         </div>
 
         <!-- Error state | 错误状态 -->
@@ -372,6 +372,16 @@ const maskData = ref(null)
 // Computed public props status | 计算是否公开
 const isPublic = computed(() => {
   return props.data?.publicProps?.name != null && props.data?.publicProps?.name !== ''
+})
+
+// 生图 loading 文案：PENDING 时展示队列位置，RUNNING 显示"创作中"
+const loadingLabel = computed(() => {
+  const info = props.data?.activeTaskInfo
+  if (info?.status === 'PENDING' && info?.queuePosition) {
+    const { user, global } = info.queuePosition
+    return `排队中（本人第 ${user}，全平台第 ${global}）`
+  }
+  return '创作中'
 })
 
 // Handle toggle public | 处理切换公开状态
@@ -1037,7 +1047,16 @@ const startResumePoll = async (taskId) => {
   resumeAbortController.value = controller
 
   try {
-    const task = await pollImageTask(taskId, controller.signal)
+    const onPollProgress = (task) => {
+      // 把中间状态（含 queuePosition）写到节点，loading 文案用它展示队列位置
+      updateNode(props.id, {
+        activeTaskInfo: {
+          status: task?.status ?? null,
+          queuePosition: task?.queuePosition ?? null
+        }
+      })
+    }
+    const task = await pollImageTask(taskId, controller.signal, onPollProgress)
     if (controller.signal.aborted) return
 
     const firstUrl = task?.images?.[0]?.url
@@ -1046,6 +1065,7 @@ const startResumePoll = async (taskId) => {
         url: firstUrl,
         loading: false,
         activeTaskId: null,
+        activeTaskInfo: null,
         error: null,
         updatedAt: Date.now()
       })
@@ -1053,6 +1073,7 @@ const startResumePoll = async (taskId) => {
       updateNode(props.id, {
         loading: false,
         activeTaskId: null,
+        activeTaskInfo: null,
         error: '任务完成但未返回图片',
         updatedAt: Date.now()
       })
@@ -1062,6 +1083,7 @@ const startResumePoll = async (taskId) => {
     updateNode(props.id, {
       loading: false,
       activeTaskId: null,
+      activeTaskInfo: null,
       error: err?.message || '任务失败',
       updatedAt: Date.now()
     })

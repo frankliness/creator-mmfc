@@ -7,7 +7,7 @@
       message="AI 画布并发配置"
       description="这些配置由用户端 Worker 读取，GlobalConfig 有约 1 分钟缓存；修改后无需重新发版，但可能需要等待下一轮缓存刷新。"
     />
-    <a-card size="small" title="画布生图调度" style="margin-bottom: 16px; max-width: 760px">
+    <a-card size="small" title="画布生图调度" style="margin-bottom: 16px; max-width: 900px">
       <a-form layout="vertical">
         <a-row :gutter="16">
           <a-col :span="8">
@@ -23,6 +23,30 @@
           <a-col :span="8">
             <a-form-item label="单任务超时（分钟）">
               <a-input-number v-model:value="concurrencyForm.timeoutMinutes" :min="1" :max="240" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+        </a-row>
+        <a-row :gutter="16">
+          <a-col :span="12">
+            <a-form-item>
+              <template #label>
+                单用户全局占比上限（%）
+                <a-tooltip title="单个用户最多占用 globalLimit × pct% 个槽位，防止一人独占全局。例如 global=15, pct=40 → 单人最多 6/15。">
+                  <span style="color: #999; cursor: help">ⓘ</span>
+                </a-tooltip>
+              </template>
+              <a-input-number v-model:value="concurrencyForm.userSharePct" :min="1" :max="100" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="12">
+            <a-form-item>
+              <template #label>
+                僵尸回收宽限（分钟）
+                <a-tooltip title="任务 RUNNING 超过 timeout + 此宽限后，sweeper 兜底判 FAILED 并释放槽位。默认 5min。">
+                  <span style="color: #999; cursor: help">ⓘ</span>
+                </a-tooltip>
+              </template>
+              <a-input-number v-model:value="concurrencyForm.zombieGraceMinutes" :min="1" :max="60" style="width: 100%" />
             </a-form-item>
           </a-col>
         </a-row>
@@ -71,6 +95,15 @@ import { getGlobalConfigs, updateGlobalConfig } from "@/api/global-config";
 const CANVAS_IMAGE_GLOBAL_CONCURRENCY_KEY = "canvas_image_global_concurrency";
 const CANVAS_IMAGE_DEFAULT_USER_CONCURRENCY_KEY = "canvas_image_default_user_concurrency";
 const CANVAS_IMAGE_TASK_TIMEOUT_MS_KEY = "canvas_image_task_timeout_ms";
+const CANVAS_IMAGE_USER_SHARE_CAP_PCT_KEY = "canvas_image_user_share_cap_pct";
+const CANVAS_IMAGE_ZOMBIE_GRACE_MS_KEY = "canvas_image_zombie_grace_ms";
+
+// 与 web/src/lib/canvas/concurrency-config.ts 中的默认值保持一致。
+const DEFAULT_GLOBAL = 15;
+const DEFAULT_USER = 3;
+const DEFAULT_TIMEOUT_MIN = 30;
+const DEFAULT_USER_SHARE_PCT = 40;
+const DEFAULT_ZOMBIE_GRACE_MIN = 5;
 
 const configs = ref<any[]>([]);
 const loading = ref(false);
@@ -81,9 +114,11 @@ const editEncrypted = ref(false);
 const editRemark = ref("");
 const savingConcurrency = ref(false);
 const concurrencyForm = reactive({
-  global: 2,
-  defaultUser: 5,
-  timeoutMinutes: 10,
+  global: DEFAULT_GLOBAL,
+  defaultUser: DEFAULT_USER,
+  timeoutMinutes: DEFAULT_TIMEOUT_MIN,
+  userSharePct: DEFAULT_USER_SHARE_PCT,
+  zombieGraceMinutes: DEFAULT_ZOMBIE_GRACE_MIN,
 });
 
 const columns = [
@@ -108,11 +143,23 @@ function readConfigNumber(key: string, fallback: number) {
 }
 
 function syncConcurrencyForm() {
-  concurrencyForm.global = readConfigNumber(CANVAS_IMAGE_GLOBAL_CONCURRENCY_KEY, 2);
-  concurrencyForm.defaultUser = readConfigNumber(CANVAS_IMAGE_DEFAULT_USER_CONCURRENCY_KEY, 5);
+  concurrencyForm.global = readConfigNumber(CANVAS_IMAGE_GLOBAL_CONCURRENCY_KEY, DEFAULT_GLOBAL);
+  concurrencyForm.defaultUser = readConfigNumber(CANVAS_IMAGE_DEFAULT_USER_CONCURRENCY_KEY, DEFAULT_USER);
   concurrencyForm.timeoutMinutes = Math.max(
     1,
-    Math.round(readConfigNumber(CANVAS_IMAGE_TASK_TIMEOUT_MS_KEY, 600000) / 60000)
+    Math.round(
+      readConfigNumber(CANVAS_IMAGE_TASK_TIMEOUT_MS_KEY, DEFAULT_TIMEOUT_MIN * 60000) / 60000
+    )
+  );
+  concurrencyForm.userSharePct = readConfigNumber(
+    CANVAS_IMAGE_USER_SHARE_CAP_PCT_KEY,
+    DEFAULT_USER_SHARE_PCT
+  );
+  concurrencyForm.zombieGraceMinutes = Math.max(
+    1,
+    Math.round(
+      readConfigNumber(CANVAS_IMAGE_ZOMBIE_GRACE_MS_KEY, DEFAULT_ZOMBIE_GRACE_MIN * 60000) / 60000
+    )
   );
 }
 
@@ -132,8 +179,18 @@ async function handleUpdate() {
 }
 
 async function saveConcurrencyConfig() {
-  if (!concurrencyForm.global || !concurrencyForm.defaultUser || !concurrencyForm.timeoutMinutes) {
-    message.warning("并发和超时配置必须大于 0");
+  if (
+    !concurrencyForm.global ||
+    !concurrencyForm.defaultUser ||
+    !concurrencyForm.timeoutMinutes ||
+    !concurrencyForm.userSharePct ||
+    !concurrencyForm.zombieGraceMinutes
+  ) {
+    message.warning("并发、超时、占比、宽限配置必须大于 0");
+    return;
+  }
+  if (concurrencyForm.userSharePct < 1 || concurrencyForm.userSharePct > 100) {
+    message.warning("单用户全局占比上限必须在 1-100 之间");
     return;
   }
   savingConcurrency.value = true;
@@ -153,6 +210,16 @@ async function saveConcurrencyConfig() {
         value: String(Math.round(concurrencyForm.timeoutMinutes * 60000)),
         encrypted: false,
         remark: "AI 画布单个生图任务 provider 调用超时毫秒数",
+      }),
+      updateGlobalConfig(CANVAS_IMAGE_USER_SHARE_CAP_PCT_KEY, {
+        value: String(concurrencyForm.userSharePct),
+        encrypted: false,
+        remark: "AI 画布单用户最多占用的全局并发百分比（1-100）",
+      }),
+      updateGlobalConfig(CANVAS_IMAGE_ZOMBIE_GRACE_MS_KEY, {
+        value: String(Math.round(concurrencyForm.zombieGraceMinutes * 60000)),
+        encrypted: false,
+        remark: "任务 RUNNING 超过 timeout 后再宽限多久判 FAILED（毫秒）",
       }),
     ]);
     message.success("画布并发配置已保存");

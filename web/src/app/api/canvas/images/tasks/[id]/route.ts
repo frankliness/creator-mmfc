@@ -59,6 +59,31 @@ export async function GET(
     return NextResponse.json({ error: "任务不存在" }, { status: 404 });
   }
 
+  // PENDING 时计算队列位置（全平台 + 本人各一份），用于前端展示"前面 X 个"
+  // 仅 PENDING 计算，避免给已 RUNNING/终态任务做无谓查询
+  let queuePosition: {
+    global: number;
+    user: number;
+  } | null = null;
+  if (task.status === "PENDING") {
+    const [globalAhead, userAhead] = await Promise.all([
+      prisma.canvasImageTask.count({
+        where: {
+          status: "PENDING",
+          createdAt: { lt: task.createdAt },
+        },
+      }),
+      prisma.canvasImageTask.count({
+        where: {
+          status: "PENDING",
+          userId: task.userId,
+          createdAt: { lt: task.createdAt },
+        },
+      }),
+    ]);
+    queuePosition = { global: globalAhead + 1, user: userAhead + 1 };
+  }
+
   // 终态：把 assetIds 还原成 { url, mimeType, bytes } 列表，与同步接口字段一致
   let images: Array<{ assetId: string; url: string; mimeType: string; bytes: number }> = [];
   if (task.status === "SUCCEEDED") {
@@ -100,6 +125,8 @@ export async function GET(
     createdAt: task.createdAt,
     startedAt: task.startedAt,
     finishedAt: task.finishedAt,
+    // 仅 PENDING 时有值；{ global, user } 均为 1-based 排名（含自己）
+    queuePosition,
     // 终态字段：仅 SUCCEEDED 时有意义
     images,
     revisedPrompt: task.revisedPrompt,

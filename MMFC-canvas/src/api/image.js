@@ -3,7 +3,7 @@
  *
  * v1.4.0：异步任务模式。
  *   1. submitImageTask(data, options)：把请求 POST 给 /api/canvas/images，立刻返回 {taskId, status}
- *   2. pollImageTask(taskId, signal)：每 2s 查 /api/canvas/images/tasks/:id 直到 SUCCEEDED / FAILED
+ *   2. pollImageTask(taskId, signal)：以指数退避节奏查 /api/canvas/images/tasks/:id 直到 SUCCEEDED / FAILED
  *   3. generateImage(data, options)：兼容旧调用——内部 = submit + poll，等 SUCCEEDED 后返回
  *
  * 旧的同步 fetch 在 OpenAI gpt-image-1 / 慢 Gemini 上常常被 HTTP 超时打断，
@@ -16,9 +16,29 @@ const IMAGE_PATH = '/images'
 const ASSETS_PATH = '/assets'
 const TASK_PATH = '/images/tasks'
 
-const POLL_INTERVAL_MS = 2000
-/** 客户端轮询的总上限（防呆，超过这个时间就放弃；后端任务仍会跑完）。10 min。 */
-const CLIENT_POLL_BUDGET_MS = 600_000
+/**
+ * 轮询节奏：随等待时间拉长间隔，避免长任务时反复打 API。
+ *   - 前 3 分钟：每 2s（用户最敏感的早期反馈窗口）
+ *   - 3-10 分钟：每 5s（生成中的常规等待）
+ *   - 10 分钟以上：每 10s（异常长，已大概率是慢 provider）
+ */
+const POLL_SCHEDULE = [
+  { until: 3 * 60_000, interval: 2_000 },
+  { until: 10 * 60_000, interval: 5_000 },
+  { until: Infinity, interval: 10_000 }
+]
+/**
+ * 客户端轮询的总上限。略大于后端 timeout + grace（默认 30min + 5min），
+ * 保证后端结论（FAILED）先到，前端只在僵尸场景兜底放弃，避免无限请求 API。
+ */
+const CLIENT_POLL_BUDGET_MS = 35 * 60_000
+
+const pickPollInterval = (elapsedMs) => {
+  for (const stage of POLL_SCHEDULE) {
+    if (elapsedMs < stage.until) return stage.interval
+  }
+  return POLL_SCHEDULE[POLL_SCHEDULE.length - 1].interval
+}
 
 const buildPayload = (data, options) => {
   const projectId = options.projectId || options.project_id
@@ -110,7 +130,7 @@ export const pollImageTask = async (taskId, signal, onProgress) => {
       try { onProgress(task) } catch (_) { /* ignore */ }
     }
 
-    await sleep(POLL_INTERVAL_MS)
+    await sleep(pickPollInterval(Date.now() - startedAt))
   }
 }
 
