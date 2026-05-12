@@ -24,10 +24,8 @@ import { saveCanvasImage, readCanvasAsset } from "@/lib/canvas/canvas-storage";
 import { logCanvasCall } from "@/lib/canvas/canvas-logger";
 import { logUserAction } from "@/lib/user-action-logger";
 import { estimateImageCost } from "@/lib/canvas/cost-table";
+import { getCanvasImageTaskTimeoutMs } from "@/lib/canvas/concurrency-config";
 import type { GeminiImageRefPart } from "@/lib/canvas/gemini-image";
-
-/** 单次 fetch 上限（worker 一定要兜住，否则 hang 死循环） */
-export const SINGLE_TASK_TIMEOUT_MS = 600_000; // 10 min
 
 const DATA_URL_RE = /^data:([^;]+);base64,(.+)$/i;
 const CANVAS_ASSET_PATH_RE = /^\/api\/canvas\/assets\/([^/?#]+)(?:[?#].*)?$/i;
@@ -144,6 +142,7 @@ export async function runImageTask(taskId: string): Promise<{
     const imageConfig = task.isEdit
       ? await resolveImageEditByModel(task.model, opts)
       : await resolveImageByModel(task.model, opts);
+    const timeoutMs = await getCanvasImageTaskTimeoutMs();
 
     // Step 4: 调 provider（带超时）
     const result = await Promise.race([
@@ -157,8 +156,8 @@ export async function runImageTask(taskId: string): Promise<{
       }),
       new Promise<never>((_, reject) =>
         setTimeout(
-          () => reject(new Error(`provider 调用超过 ${SINGLE_TASK_TIMEOUT_MS / 1000}s 上限`)),
-          SINGLE_TASK_TIMEOUT_MS
+          () => reject(new Error(`provider 调用超过 ${Math.round(timeoutMs / 1000)}s 上限`)),
+          timeoutMs
         )
       ),
     ]);

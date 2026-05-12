@@ -4,7 +4,8 @@ import { prisma } from "@/lib/prisma";
  * User.quota 中支持的 canvas 配额字段（均为可选）：
  *   {
  *     "daily_image_limit":  number,   // 每日生图次数上限
- *     "daily_chat_tokens":  number    // 每日聊天 totalTokens 上限
+ *     "daily_chat_tokens":  number,   // 每日聊天 totalTokens 上限
+ *     "canvas_image_concurrency": number // 单用户生图并发上限；缺失则用全局默认
  *   }
  * 缺失则不限制。
  */

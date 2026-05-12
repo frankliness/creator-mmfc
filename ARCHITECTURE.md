@@ -230,7 +230,9 @@ MMFC-canvas/src/
 - 关键环境变量：
   - `WORKER_POLL_INTERVAL`（视频任务，默认 15000ms）
   - `WORKER_CANVAS_IMAGE_POLL_INTERVAL`（画布图任务，默认 3000ms）
-  - `WORKER_CANVAS_IMAGE_BATCH`（并发上限，默认 2）
+  - `WORKER_CANVAS_IMAGE_GLOBAL_CONCURRENCY`（画布图全局并发 fallback，默认 2；Admin `canvas_image_global_concurrency` 优先）
+  - `WORKER_CANVAS_IMAGE_PER_USER_CONCURRENCY`（画布图默认单用户并发 fallback，默认 5；Admin `canvas_image_default_user_concurrency` 优先）
+  - `WORKER_CANVAS_IMAGE_TASK_TIMEOUT_MS`（画布图单任务超时 fallback，默认 600000；Admin `canvas_image_task_timeout_ms` 优先）
 
 ### 4.3 管理后台
 
@@ -696,7 +698,7 @@ v1.4.0 新增。画布生图的**异步任务状态机**，与 `CanvasAiCall`（
 [ ImageNode mount/watch activeTaskId ] 刷新页面后自动恢复轮询
 ```
 
-僵尸回收：worker 启动时调用 `reclaimZombies()` 把 RUNNING 超过 20 分钟（`SINGLE_TASK_TIMEOUT_MS * 2`）还没 finish 的任务标记 FAILED，避免崩溃残留。
+僵尸回收：worker 启动时调用 `reclaimZombies()` 把 RUNNING 超过「单任务超时 * 2」还没 finish 的任务标记 FAILED，避免崩溃残留。单任务超时优先读取 Admin 全局配置 `canvas_image_task_timeout_ms`，未配置时 fallback 到 `WORKER_CANVAS_IMAGE_TASK_TIMEOUT_MS` 或默认 600000ms。
 
 ---
 

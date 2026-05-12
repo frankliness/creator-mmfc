@@ -160,12 +160,12 @@
 - **`POST /api/canvas/images`** 不再调 provider，只做：参数校验 + 项目所有权 + 配额检查（**含 in-flight 任务计数**，避免狂提交）+ 模型能力预检 → 写一行 `CanvasImageTask`(PENDING) → 返回 `{ taskId, status }`（HTTP 202）
 - **`GET /api/canvas/images/tasks/:id`** 单任务查询，终态映射成与旧同步接口一致的 `{ images: [...], revisedPrompt }`
 - **`GET /api/canvas/images/tasks?projectId=...&status=active`** 列出当前项目在途任务（孤儿恢复用）
-- **`web/src/lib/canvas/image-task-runner.ts`**：`runImageTask(taskId)` 用条件 `updateMany(where:{status:'PENDING'})` 抢占，覆盖 provider 调用（10min 单次 fetch 超时）+ 落盘 + `CanvasAsset` / `CanvasAiCall` / `UserActionLog` 三连写
+- **`web/src/lib/canvas/image-task-runner.ts`**：`runImageTask(taskId)` 用条件 `updateMany(where:{status:'PENDING'})` 抢占，覆盖 provider 调用（默认 10min，可由 Admin 全局配置）+ 落盘 + `CanvasAsset` / `CanvasAiCall` / `UserActionLog` 三连写
 
 #### 3. Worker
 
-- 新增 `web/src/worker/pollCanvasImageTasks.ts`：3 秒 tick，并发 2 个 PENDING 任务（`WORKER_CANVAS_IMAGE_BATCH` / `WORKER_CANVAS_IMAGE_POLL_INTERVAL` 可调）
-- 启动时 `reclaimZombies()` 把超过阈值（默认 20 分钟）还在 RUNNING 的任务标记 FAILED，避免崩溃后僵尸态
+- 新增 `web/src/worker/pollCanvasImageTasks.ts`：3 秒 tick，按 Admin 配置的全局并发和用户并发持续补位启动 PENDING 任务
+- 启动时 `reclaimZombies()` 把超过阈值（单任务超时 * 2）还在 RUNNING 的任务标记 FAILED，避免崩溃后僵尸态
 - 主循环改为视频任务 + 画布图任务两个独立 loop（视频 15s 节奏不变，画布图 3s 紧节奏）
 
 #### 4. 画布前端

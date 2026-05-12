@@ -102,7 +102,8 @@
       <a-tab-pane key="canvas-quota" tab="AI 画布配额">
         <p style="color: #666; margin-bottom: 12px">
           对应用户端校验字段：<code>quota.daily_image_limit</code>（每日生图次数上限）、
-          <code>quota.daily_chat_tokens</code>（每日聊天 totalTokens 上限）。留空表示不限制。
+          <code>quota.daily_chat_tokens</code>（每日聊天 totalTokens 上限）、
+          <code>quota.canvas_image_concurrency</code>（单用户生图并发上限）。留空表示使用全局默认。
         </p>
         <a-form layout="vertical" style="max-width: 400px">
           <a-form-item label="每日生图次数上限">
@@ -110,6 +111,9 @@
           </a-form-item>
           <a-form-item label="每日聊天 Token 上限">
             <a-input-number v-model:value="canvasQuotaForm.daily_chat_tokens" :min="0" style="width: 100%" placeholder="不限制请留空" />
+          </a-form-item>
+          <a-form-item label="单用户生图并发上限">
+            <a-input-number v-model:value="canvasQuotaForm.canvas_image_concurrency" :min="1" :max="100" style="width: 100%" placeholder="留空使用全局默认" />
           </a-form-item>
           <a-form-item>
             <a-button type="primary" @click="saveCanvasQuota">保存配额</a-button>
@@ -144,9 +148,14 @@ const configForm = reactive({
   isDefault: false,
 });
 
-const canvasQuotaForm = reactive<{ daily_image_limit: number | null; daily_chat_tokens: number | null }>({
+const canvasQuotaForm = reactive<{
+  daily_image_limit: number | null;
+  daily_chat_tokens: number | null;
+  canvas_image_concurrency: number | null;
+}>({
   daily_image_limit: null,
   daily_chat_tokens: null,
+  canvas_image_concurrency: null,
 });
 
 const configColumns = [
@@ -170,6 +179,10 @@ async function fetchUser() {
     typeof q.daily_image_limit === "number" && Number.isFinite(q.daily_image_limit) ? q.daily_image_limit : null;
   canvasQuotaForm.daily_chat_tokens =
     typeof q.daily_chat_tokens === "number" && Number.isFinite(q.daily_chat_tokens) ? q.daily_chat_tokens : null;
+  canvasQuotaForm.canvas_image_concurrency =
+    typeof q.canvas_image_concurrency === "number" && Number.isFinite(q.canvas_image_concurrency)
+      ? q.canvas_image_concurrency
+      : null;
 }
 
 async function saveCanvasQuota() {
@@ -183,6 +196,11 @@ async function saveCanvasQuota() {
     merged.daily_chat_tokens = Number(canvasQuotaForm.daily_chat_tokens);
   } else {
     delete merged.daily_chat_tokens;
+  }
+  if (canvasQuotaForm.canvas_image_concurrency != null) {
+    merged.canvas_image_concurrency = Number(canvasQuotaForm.canvas_image_concurrency);
+  } else {
+    delete merged.canvas_image_concurrency;
   }
   await updateUser(userId, { quota: merged });
   message.success("画布配额已保存");
