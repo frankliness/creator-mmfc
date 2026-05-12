@@ -1,6 +1,6 @@
 # Creator MMFC
 
-**版本：1.5.3**
+**版本：1.6.0**
 
 面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，可选 **GCS** 做对象存储。
 
@@ -52,6 +52,54 @@
 - Prompt 模板管理：版本历史、回滚、Schema 测试、按 provider 适配
 - 凭据池管理：CRUD、连通性探测、主用凭据、用途/模型粒度适用范围
 - 默认模型管理、模型注册表、用户行为日志、审计日志、Token 统计
+
+---
+
+### 版本 1.6.0 更新摘要
+
+**主要特性：画布生图多渠道轮询 + 429 自动冷却**
+
+#### 1. 渠道池调度（多 Azure 部署 / 多 OpenAI Key）
+
+- `ProviderCredential` 新增 `concurrency`（默认 6）和 `cooldownUntil` 字段，支持给每条凭据独立设置并发上限
+- Worker 新增渠道池调度路径（`canvas_image_rotation_enabled=true`，默认开启）：
+  - 每 tick 按"当前 RUNNING 最少的渠道优先"分发 PENDING 任务（最少负载优先）
+  - 原子抢占：`UPDATE ... WHERE status='PENDING' AND bypassRotation=false`，写入 `credentialId + startedAt`
+  - 多实例水平扩展时只需把计数挪到 Redis / 改用 `SELECT ... FOR UPDATE SKIP LOCKED`（注释标注扩展点）
+- 命中 HTTP 429 / `RateLimitReached` / `Too Many Requests` / `RESOURCE_EXHAUSTED` 等限流错误时：
+  - 自动设置 `ProviderCredential.cooldownUntil = now + retryAfterMs`（默认 30s）
+  - 任务回退 PENDING（`credentialId` 清空），由下一 tick 的其他渠道接手
+  - 最多冷却回退 5 次（超过后直接 FAILED）
+- 新增 `web/src/lib/llm/error-classify.ts`：统一识别各 provider 的限流格式并提取 `retry-after`
+
+#### 2. bypassRotation 机制
+
+- 以下任务绕过渠道池，走旧的 global+user 并发路径（`bypassRotation=true`）：
+  - 用户级 `UserApiConfig` 配置命中（含 `canvas_image`/`canvas_image_edit` callType）
+  - Admin 全局关闭 `canvas_image_rotation_enabled` 开关
+  - 请求体显式携带 `credentialId`（admin / 调试场景）
+
+#### 3. CanvasAiCall 新增 `rate_limited` 状态
+
+- `CanvasAiCall.status` 从 `success | failed` 扩为 `success | failed | rate_limited`
+- 新增 `CanvasAiCall.credentialId` 字段，便于按渠道聚合
+- 配额计算（`canvas-quota.ts`）仍以 `status:"success"` 正向过滤，不受影响
+
+#### 4. Schema 变更
+
+| 表 | 新增字段 |
+|---|---|
+| `ProviderCredential` | `concurrency INT DEFAULT 6`、`cooldownUntil TIMESTAMP?` |
+| `CanvasImageTask` | `failureKind TEXT?`、`bypassRotation BOOLEAN DEFAULT false`、`cooldownRetries INT DEFAULT 0` |
+| `CanvasAiCall` | `credentialId TEXT?` |
+
+迁移文件：`web/prisma/migrations/20260512000000_canvas_image_channel_rotation/migration.sql`
+
+#### 5. Admin 配置与看板
+
+- **系统设置 → 凭据池**：列表新增"并发上限"与"冷却到"列；编辑表单新增"并发上限"输入（hint：Azure gpt-image-2 实测约 6）
+- **系统设置 → 全局配置**：新增"启用多渠道轮询"开关（关闭后回退到 v1.4 单凭据策略）
+- **新页面 → 画布渠道统计**（`/canvas-channel-stats`）：按渠道展示近 1 小时的成功/失败/限流次数与实时 RUNNING 占比，每 30 秒自动刷新
 
 ---
 
@@ -343,7 +391,7 @@ docker compose up -d --build
 5. `MMFC-canvas/src/views/Canvas.vue` 仍有项目复制 / 删除相关 `TODO`，说明画布项目操作闭环还不完整，建议补齐并加端到端验证。
 6. 根仓库仍有 `tmp/`、`.claude/` 等本地工作痕迹未纳入忽略规则；本次未自动入库，但建议后续明确 `.gitignore` 策略，避免日志和草稿误提交。
 
-### 升级已有部署（1.1.x / 1.2.0 / 1.3.0 / 1.4.0 / 1.5.0 / 1.5.1 → 1.5.2）
+### 升级已有部署（任意旧版本 → 1.6.0）
 
 1. 拉取最新代码
 2. 执行数据库迁移（在 `web/` 目录）：
@@ -357,6 +405,7 @@ docker compose up -d --build
    - `20260509060000_provider_credential_scopes`（1.5.0：ProviderCredential 的用途 / 模型作用域）
    - `20260510000000_storyboard_seed`（1.5.2：Storyboard.seed，可按分镜覆盖项目 seed）
    - `20260510001000_canvas_ai_call_cost`（1.5.2：CanvasAiCall.costEstimate）
+   - `20260512000000_canvas_image_channel_rotation`（1.6.0：渠道并发上限、冷却字段、任务渠道绑定）
 3. 执行 seed 补充初始数据（首次升级需要）：
    ```bash
    cd admin && npx ts-node prisma/seed.ts
@@ -369,8 +418,10 @@ docker compose up -d --build
    ```
    `web-worker` 启动时会调 `reclaimZombies()` 清理上一轮残留的 RUNNING 任务。
 5. 进入管理后台核对：
-   - **系统设置 → 凭据池**：检查自动迁移的凭据，按需补全 deployment / apiVersion 等 Azure 字段
+   - **系统设置 → 凭据池**：检查自动迁移的凭据；为用于画布生图的 Azure 凭据设置合适的"并发上限"（Azure gpt-image-2 实测约 6），按需补全 deployment / apiVersion 等 Azure 字段
    - 为高风险共享 key 配置 `purposes` / `modelKeys`，避免聊天、分镜、画布生图误共用
+   - **系统设置 → 全局配置**：确认"启用多渠道轮询"开关状态（默认开启；如需兼容旧行为可关闭）
+   - **画布渠道统计**：打开 `/canvas-channel-stats` 页面，确认各渠道成功/失败/限流计数正常
    - **系统设置 → 默认模型**：为 4 个用途各选一个默认模型
    - **系统设置 → 模型注册表**：按需启用/禁用模型
    - **Prompt 管理**：确认 provider-specific 模板与 Schema 已发布
