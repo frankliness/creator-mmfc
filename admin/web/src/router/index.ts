@@ -22,6 +22,7 @@ const routes: RouteRecordRaw[] = [
       { path: "projects/:id", name: "ProjectDetail", component: () => import("@/views/project/detail.vue"), meta: { title: "项目详情" } },
       { path: "canvas-projects", name: "CanvasProjectList", component: () => import("@/views/canvas-project/list.vue"), meta: { title: "AI 画布项目" } },
       { path: "canvas-projects/:id", name: "CanvasProjectDetail", component: () => import("@/views/canvas-project/detail.vue"), meta: { title: "画布项目详情" } },
+      { path: "canvas-channel-stats", name: "CanvasChannelStats", component: () => import("@/views/canvas-channel-stats/index.vue"), meta: { title: "画布渠道统计" } },
       { path: "tasks", name: "TaskList", component: () => import("@/views/task/list.vue"), meta: { title: "任务管理" } },
       { path: "tasks/:id", name: "TaskDetail", component: () => import("@/views/task/detail.vue"), meta: { title: "任务详情" } },
       { path: "prompts", name: "PromptList", component: () => import("@/views/prompt/list.vue"), meta: { title: "Prompt 管理" } },

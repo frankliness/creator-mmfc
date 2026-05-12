@@ -17,6 +17,7 @@ import { userActionLogRoutes } from "./modules/user-action-log/user-action-log.r
 import { connectionTestRoutes } from "./modules/connection-test/connection-test.routes.js";
 import { modelRegistryRoutes } from "./modules/model-registry/model-registry.routes.js";
 import { credentialsRoutes } from "./modules/credentials/credentials.routes.js";
+import { canvasChannelStatsRoutes } from "./modules/canvas-channel-stats/canvas-channel-stats.routes.js";
 
 function parseCorsOrigins(): string | string[] {
   const raw = process.env.CORS_ORIGIN || "http://localhost:8080";
@@ -55,6 +56,7 @@ export async function buildApp() {
   await app.register(connectionTestRoutes, { prefix: "/api/admin/connection-test" });
   await app.register(modelRegistryRoutes, { prefix: "/api/admin/model-registry" });
   await app.register(credentialsRoutes, { prefix: "/api/admin/credentials" });
+  await app.register(canvasChannelStatsRoutes, { prefix: "/api/admin/canvas-channel-stats" });
 
   app.get("/api/admin/health", async () => ({ status: "ok" }));
 

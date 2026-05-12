@@ -206,12 +206,17 @@ model ProviderCredential {
   isPrimary      Boolean         @default(false)
   sortOrder      Int             @default(100)
   remark         String?
+  /** v1.5.0: 每渠道画布生图并发上限（worker 轮询使用） */
+  concurrency    Int             @default(6)
+  /** v1.5.0: 命中限流后的冷却到期时间；null 或已过期则参与调度 */
+  cooldownUntil  DateTime?
   userApiConfigs UserApiConfig[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
   @@index([provider, isActive])
   @@index([provider, isPrimary])
+  @@index([isActive, cooldownUntil])
 }
 
 model ModelRegistry {
@@ -447,12 +452,16 @@ model CanvasAiCall {
   imageCount   Int            @default(0)
   durationMs   Int?
   costEstimate Decimal?       @db.Decimal(10, 6)
+  /** status: success / failed / rate_limited（v1.5.0 起新增 rate_limited） */
   status       String
   error        String?        @db.Text
+  /** v1.5.0: 实际分发的渠道凭据 id，渠道看板按此聚合 */
+  credentialId String?
   createdAt    DateTime       @default(now())
 
   @@index([userId, createdAt])
   @@index([projectId])
+  @@index([credentialId, createdAt])
 }
 
 /// 画布图片生成任务（v1.4.0 起异步化）。
@@ -479,6 +488,12 @@ model CanvasImageTask {
   durationMs        Int?
   error             String?       @db.Text
   attempts          Int           @default(0)
+  /** v1.5.0: 失败原因分类 rate_limit / provider_error / timeout / other */
+  failureKind       String?
+  /** v1.5.0: 绕过渠道轮询（用户级 UserApiConfig 命中或 rotation 关闭时为 true） */
+  bypassRotation    Boolean       @default(false)
+  /** v1.5.0: 限流回退累计次数，硬上限 5 防热循环 */
+  cooldownRetries   Int           @default(0)
   startedAt         DateTime?
   finishedAt        DateTime?
   createdAt         DateTime      @default(now())
@@ -487,4 +502,5 @@ model CanvasImageTask {
   @@index([userId, status])
   @@index([projectId, status, createdAt])
   @@index([status, createdAt])
+  @@index([credentialId, finishedAt])
 }

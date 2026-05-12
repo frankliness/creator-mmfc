@@ -45,6 +45,15 @@
         <template v-if="column.key === 'isActive'">
           <a-switch :checked="record.isActive" @change="() => toggle(record)" />
         </template>
+        <template v-if="column.key === 'concurrency'">
+          <span>{{ record.concurrency }}</span>
+        </template>
+        <template v-if="column.key === 'cooldownUntil'">
+          <a-tag v-if="isCooling(record.cooldownUntil)" color="red">
+            冷却中 · 至 {{ formatCooldown(record.cooldownUntil) }}
+          </a-tag>
+          <span v-else style="color: #999">—</span>
+        </template>
         <template v-if="column.key === 'action'">
           <a-space size="small">
             <a-button type="link" size="small" @click="testOne(record)" :loading="testingId === record.id">
@@ -137,9 +146,21 @@
         <a-form-item label="备注">
           <a-textarea v-model:value="form.remark" :rows="2" />
         </a-form-item>
-        <a-form-item label="排序权重（小的在前）">
-          <a-input-number v-model:value="form.sortOrder" :min="0" :max="9999" style="width: 200px" />
-        </a-form-item>
+        <a-row :gutter="16">
+          <a-col :span="12">
+            <a-form-item label="排序权重（小的在前）">
+              <a-input-number v-model:value="form.sortOrder" :min="0" :max="9999" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="12">
+            <a-form-item label="并发上限（画布生图）">
+              <a-input-number v-model:value="form.concurrency" :min="1" :max="200" style="width: 100%" />
+              <div style="color: #999; font-size: 12px; margin-top: 4px">
+                Azure gpt-image-2 实测约 6；多渠道之和 = 实际可用画布并发。
+              </div>
+            </a-form-item>
+          </a-col>
+        </a-row>
       </a-form>
     </a-modal>
   </div>
@@ -211,6 +232,7 @@ const form = reactive<Required<Omit<CredentialInput, "deployment" | "apiVersion"
   isPrimary: false,
   sortOrder: 100,
   remark: "",
+  concurrency: 6,
 });
 
 const baseUrlPlaceholder = computed(() => {
@@ -255,10 +277,23 @@ const columns = [
   { title: "模型范围", dataIndex: "modelKeys", key: "modelKeys", width: 220 },
   { title: "Base URL", dataIndex: "baseUrl", key: "baseUrl", ellipsis: true },
   { title: "API Key", dataIndex: "apiKeyMasked", key: "apiKeyMasked", width: 200 },
+  { title: "并发", dataIndex: "concurrency", key: "concurrency", width: 80 },
+  { title: "冷却", dataIndex: "cooldownUntil", key: "cooldownUntil", width: 180 },
   { title: "主用", dataIndex: "isPrimary", key: "isPrimary", width: 120 },
   { title: "启用", dataIndex: "isActive", key: "isActive", width: 80 },
   { title: "操作", key: "action", width: 220 },
 ];
+
+function isCooling(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return new Date(value).getTime() > Date.now();
+}
+
+function formatCooldown(value: string | null | undefined): string {
+  if (!value) return "";
+  const d = new Date(value);
+  return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}:${d.getSeconds().toString().padStart(2, "0")}`;
+}
 
 const providerLabel = (p: string) => PROVIDER_TYPES.find((x) => x.key === p)?.label || p;
 const providerColor = (p: string) => PROVIDER_COLORS[p] || "default";
@@ -288,6 +323,7 @@ const resetForm = () => {
   form.isPrimary = false;
   form.sortOrder = 100;
   form.remark = "";
+  form.concurrency = 6;
 };
 
 const openCreate = () => {
@@ -310,6 +346,7 @@ const openEdit = (rec: Credential) => {
   form.isPrimary = rec.isPrimary;
   form.sortOrder = rec.sortOrder;
   form.remark = rec.remark ?? "";
+  form.concurrency = rec.concurrency ?? 6;
   showDialog.value = true;
 };
 
@@ -344,6 +381,7 @@ const submit = async () => {
     isPrimary: form.isPrimary,
     sortOrder: form.sortOrder,
     remark: form.remark.trim() || null,
+    concurrency: form.concurrency,
   };
   if (form.apiKey.trim()) payload.apiKey = form.apiKey.trim();
 

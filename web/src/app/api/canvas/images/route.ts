@@ -18,6 +18,7 @@ import { prisma } from "@/lib/prisma";
 import { authError, requireCanvasUser } from "@/lib/canvas/canvas-auth";
 import { checkImageQuota } from "@/lib/canvas/canvas-quota";
 import { getCapabilities, supportsImageEdit } from "@/lib/llm/capabilities";
+import { isCanvasImageRotationEnabled } from "@/lib/canvas/concurrency-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -101,6 +102,26 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // v1.5.0: 渠道轮询绕过判定
+  //   - 用户级 UserApiConfig 命中 → 走用户私 key，不进共享渠道池
+  //   - 全局开关关闭 → 全部走旧路径
+  //   - API 请求显式带 credentialId（admin/调试）→ 视为偏好，也绕过轮询
+  const [userOverride, rotationEnabled] = await Promise.all([
+    prisma.userApiConfig.findFirst({
+      where: {
+        userId: auth.user.id,
+        callType: { in: ["canvas_image", "canvas_image_edit"] },
+        isActive: true,
+        isDefault: true,
+      },
+      select: { id: true },
+    }),
+    isCanvasImageRotationEnabled(),
+  ]);
+
+  const bypassRotation =
+    !!userOverride || !rotationEnabled || !!parsed.data.credentialId;
+
   // refImagesSnapshot 直接保存原始输入数组（asset paths / data URLs / 内嵌对象）。
   // 由 worker 在 runImageTask 中通过 normalizeRefImagesFromSnapshot 还原成 base64。
   const task = await prisma.canvasImageTask.create({
@@ -116,6 +137,7 @@ export async function POST(req: NextRequest) {
       size: parsed.data.size ?? null,
       quality: parsed.data.quality ?? null,
       isEdit,
+      bypassRotation,
       refImagesSnapshot:
         parsed.data.refImages && parsed.data.refImages.length > 0
           ? (parsed.data.refImages as unknown as object)

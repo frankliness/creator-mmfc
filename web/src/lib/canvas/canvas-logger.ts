@@ -5,6 +5,13 @@ import { logUserAction } from "@/lib/user-action-logger";
 import { estimateChatCost, estimateImageCost } from "./cost-table";
 
 export type CanvasCallType = "canvas_chat" | "canvas_image" | "canvas_image_edit";
+/**
+ * status 取值：
+ *   - "success"      调用成功，写 TokenUsageLog（计入配额）
+ *   - "failed"       调用失败（非限流）；不写 TokenUsageLog
+ *   - "rate_limited" 命中 429 被退回 PENDING 等待轮换渠道；用于看板，不计配额、不写 TokenUsageLog
+ */
+export type CanvasCallStatus = "success" | "failed" | "rate_limited";
 
 export interface CanvasCallLogParams {
   userId: string;
@@ -16,7 +23,7 @@ export interface CanvasCallLogParams {
   totalTokens?: bigint;
   imageCount?: number;
   durationMs?: number;
-  status: "success" | "failed";
+  status: CanvasCallStatus;
   error?: string | null;
   /** 图片场景：aspect ratio (1:1/16:9 等)，用于精确估算 gpt-image-1 / DALL-E 3 价格 */
   size?: string;
@@ -24,6 +31,8 @@ export interface CanvasCallLogParams {
   quality?: string;
   /** 实际使用的 provider 类型（openai / azure_openai / google）；不填则记 "gemini-canvas" 兼容旧报表 */
   upstreamProvider?: string;
+  /** 实际分发到的渠道凭据 id；渠道维度看板按此字段聚合 */
+  credentialId?: string | null;
 }
 
 /**
@@ -81,6 +90,7 @@ export async function logCanvasCall(params: CanvasCallLogParams): Promise<void> 
             : null,
         status: params.status,
         error: params.error ?? null,
+        credentialId: params.credentialId ?? null,
       },
     });
   } catch (err) {

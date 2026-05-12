@@ -49,6 +49,8 @@ const createSchema = z.object({
   isPrimary: z.boolean().default(false),
   sortOrder: z.number().int().default(100),
   remark: z.string().optional().nullable(),
+  /** v1.5.0: 每渠道画布生图并发上限（worker 渠道轮询使用） */
+  concurrency: z.number().int().min(1).max(200).default(6),
 });
 
 const updateSchema = createSchema
@@ -202,6 +204,8 @@ function toApi(cred: {
   isPrimary: boolean;
   sortOrder: number;
   remark: string | null;
+  concurrency: number;
+  cooldownUntil: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -222,6 +226,8 @@ function toApi(cred: {
     isPrimary: cred.isPrimary,
     sortOrder: cred.sortOrder,
     remark: cred.remark,
+    concurrency: cred.concurrency,
+    cooldownUntil: cred.cooldownUntil,
     createdAt: cred.createdAt,
     updatedAt: cred.updatedAt,
   };
@@ -279,6 +285,7 @@ export async function credentialsRoutes(app: FastifyInstance) {
         isPrimary: data.isPrimary,
         sortOrder: data.sortOrder,
         remark: data.remark ?? null,
+        concurrency: data.concurrency,
       },
     });
 
@@ -327,6 +334,7 @@ export async function credentialsRoutes(app: FastifyInstance) {
     }
     if (d.sortOrder !== undefined) data.sortOrder = d.sortOrder;
     if (d.remark !== undefined) data.remark = d.remark;
+    if (d.concurrency !== undefined) data.concurrency = d.concurrency;
 
     const nextProvider = (d.provider ?? existing.provider) as ProviderType;
     const nextPurposes = (d.purposes ?? credentialPurposes(existing.purposes)) as Purpose[];
