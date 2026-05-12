@@ -50,6 +50,12 @@
             </a-form-item>
           </a-col>
         </a-row>
+        <a-form-item label="启用多渠道轮询">
+          <a-switch v-model:checked="concurrencyForm.rotationEnabled" />
+          <span style="color: #999; font-size: 12px; margin-left: 8px">
+            开启后画布生图任务会按各 ProviderCredential 的并发上限轮询分发，命中 429 自动冷却该渠道；关闭则回退到 v1.4 单凭据策略。
+          </span>
+        </a-form-item>
         <a-space>
           <a-button type="primary" :loading="savingConcurrency" @click="saveConcurrencyConfig">
             保存画布并发配置
@@ -97,6 +103,7 @@ const CANVAS_IMAGE_DEFAULT_USER_CONCURRENCY_KEY = "canvas_image_default_user_con
 const CANVAS_IMAGE_TASK_TIMEOUT_MS_KEY = "canvas_image_task_timeout_ms";
 const CANVAS_IMAGE_USER_SHARE_CAP_PCT_KEY = "canvas_image_user_share_cap_pct";
 const CANVAS_IMAGE_ZOMBIE_GRACE_MS_KEY = "canvas_image_zombie_grace_ms";
+const CANVAS_IMAGE_ROTATION_ENABLED_KEY = "canvas_image_rotation_enabled";
 
 // 与 web/src/lib/canvas/concurrency-config.ts 中的默认值保持一致。
 const DEFAULT_GLOBAL = 15;
@@ -119,6 +126,7 @@ const concurrencyForm = reactive({
   timeoutMinutes: DEFAULT_TIMEOUT_MIN,
   userSharePct: DEFAULT_USER_SHARE_PCT,
   zombieGraceMinutes: DEFAULT_ZOMBIE_GRACE_MIN,
+  rotationEnabled: true,
 });
 
 const columns = [
@@ -161,6 +169,13 @@ function syncConcurrencyForm() {
       readConfigNumber(CANVAS_IMAGE_ZOMBIE_GRACE_MS_KEY, DEFAULT_ZOMBIE_GRACE_MIN * 60000) / 60000
     )
   );
+  const rotationRaw = configs.value.find((item) => item.key === CANVAS_IMAGE_ROTATION_ENABLED_KEY)?.value;
+  if (rotationRaw === undefined || rotationRaw === null || rotationRaw === "") {
+    concurrencyForm.rotationEnabled = true;
+  } else {
+    const s = String(rotationRaw).toLowerCase();
+    concurrencyForm.rotationEnabled = !(s === "false" || s === "0" || s === "off" || s === "no");
+  }
 }
 
 function openEdit(record: any) {
@@ -220,6 +235,11 @@ async function saveConcurrencyConfig() {
         value: String(Math.round(concurrencyForm.zombieGraceMinutes * 60000)),
         encrypted: false,
         remark: "任务 RUNNING 超过 timeout 后再宽限多久判 FAILED（毫秒）",
+      }),
+      updateGlobalConfig(CANVAS_IMAGE_ROTATION_ENABLED_KEY, {
+        value: concurrencyForm.rotationEnabled ? "true" : "false",
+        encrypted: false,
+        remark: "AI 画布生图多渠道轮询总开关；关闭后回退到 v1.4 单凭据策略",
       }),
     ]);
     message.success("画布并发配置已保存");

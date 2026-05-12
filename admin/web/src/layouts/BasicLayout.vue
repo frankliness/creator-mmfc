@@ -21,6 +21,10 @@
           <template #icon><AppstoreOutlined /></template>
           <span>AI 画布项目</span>
         </a-menu-item>
+        <a-menu-item key="/canvas-channel-stats">
+          <template #icon><BarChartOutlined /></template>
+          <span>画布渠道统计</span>
+        </a-menu-item>
         <a-menu-item key="/tasks">
           <template #icon><ThunderboltOutlined /></template>
           <span>任务管理</span>

@@ -154,12 +154,17 @@ model ProviderCredential {
   isPrimary      Boolean         @default(false)
   sortOrder      Int             @default(100)
   remark         String?
+  /** 该渠道画布生图并发上限（仅 canvas_image / canvas_image_edit 调度使用；Azure gpt-image-2 实测约 6） */
+  concurrency    Int             @default(6)
+  /** 命中限流后的冷却到期时间；null 或已过期则参与调度。worker 调度时跳过未过期的渠道。 */
+  cooldownUntil  DateTime?
   userApiConfigs UserApiConfig[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
   @@index([provider, isActive])
   @@index([provider, isPrimary])
+  @@index([isActive, cooldownUntil])
 }
 
 model ModelRegistry {
@@ -416,12 +421,16 @@ model CanvasAiCall {
   imageCount   Int            @default(0)
   durationMs   Int?
   costEstimate Decimal?       @db.Decimal(10, 6)
+  /** status: success / failed / rate_limited（v1.5.0 起新增 rate_limited 用于看板，不算配额消耗） */
   status       String
   error        String?        @db.Text
+  /** 实际分发的渠道（仅 canvas_image* 调用且 worker 抢占成功时回填）；用于渠道看板聚合 */
+  credentialId String?
   createdAt    DateTime       @default(now())
 
   @@index([userId, createdAt])
   @@index([projectId])
+  @@index([credentialId, createdAt])
 }
 
 /// 画布图片生成任务（v1.4.0 起异步化）。
@@ -441,6 +450,12 @@ model CanvasImageTask {
   callType           String
   /** 输入：模型 + 凭据偏好 + 提示词 */
   model              String
+  /**
+   * 凭据 id。语义双重：
+   *   - API 建任务时携带 → 用户/管理员显式偏好（admin / 调试场景）
+   *   - worker 渠道轮询抢占时回填 → 实际分发到的渠道（看板/审计依据）
+   * 限流回退时会被清空，让任务回到 PENDING 由其他渠道接手。
+   */
   credentialId       String?
   prompt             String        @db.Text
   size               String?
@@ -458,8 +473,19 @@ model CanvasImageTask {
   costEstimate       Decimal?      @db.Decimal(10, 6)
   durationMs         Int?
   error              String?       @db.Text
-  /** 重试计数（暂未启用，预留） */
+  /** 重试计数（worker 抢占时 +1） */
   attempts           Int           @default(0)
+  /** 失败原因分类（status=FAILED 时填）：rate_limit / provider_error / timeout / other */
+  failureKind        String?
+  /**
+   * 是否绕过渠道轮询：
+   *   - 用户级 UserApiConfig 命中 canvas_image* 时为 true（用户私 key 不进共享池）
+   *   - 全局 canvas_image_rotation_enabled=false 时为 true
+   * worker 对 bypassRotation=true 的任务走旧逻辑：只受全局+用户并发约束，不占渠道并发位。
+   */
+  bypassRotation     Boolean       @default(false)
+  /** 限流回退累计次数（worker 抢占处不增；image-task-runner 命中 429 时 +1）。硬上限 5 防热循环。 */
+  cooldownRetries    Int           @default(0)
   startedAt          DateTime?
   finishedAt         DateTime?
   createdAt          DateTime      @default(now())
@@ -468,4 +494,5 @@ model CanvasImageTask {
   @@index([userId, status])
   @@index([projectId, status, createdAt])
   @@index([status, createdAt])
+  @@index([credentialId, finishedAt])
 }

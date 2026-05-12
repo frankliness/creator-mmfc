@@ -20,12 +20,16 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { generateProviderImage } from "@/lib/llm/image";
 import { resolveImageByModel, resolveImageEditByModel } from "@/lib/llm/credential-resolver";
+import { classifyError } from "@/lib/llm/error-classify";
 import { saveCanvasImage, readCanvasAsset } from "@/lib/canvas/canvas-storage";
 import { logCanvasCall } from "@/lib/canvas/canvas-logger";
 import { logUserAction } from "@/lib/user-action-logger";
 import { estimateImageCost } from "@/lib/canvas/cost-table";
 import { getCanvasImageTaskTimeoutMs } from "@/lib/canvas/concurrency-config";
 import type { GeminiImageRefPart } from "@/lib/canvas/gemini-image";
+
+const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 30_000;
+const MAX_COOLDOWN_RETRIES = 5;
 
 const DATA_URL_RE = /^data:([^;]+);base64,(.+)$/i;
 const CANVAS_ASSET_PATH_RE = /^\/api\/canvas\/assets\/([^/?#]+)(?:[?#].*)?$/i;
@@ -103,22 +107,37 @@ function buildNoImageError(result: { revisedPrompt?: string; raw?: unknown }): s
 /**
  * 跑一个 PENDING/RUNNING 任务到终态。返回 task 终态行；不抛异常。
  *
- * 重入安全：内部用条件 update 把 PENDING → RUNNING。如果别的 worker 已经 RUNNING，
- * 这里第一步就会拿不到，直接返回 null（让调用方跳过）。
+ * 调用约定（v1.5.0 起）：
+ *   - 渠道池路径：worker 在 pollCanvasImageTasks 抢占处已经把 status=PENDING→RUNNING
+ *     并写好 credentialId + attempts++。这里直接跑。
+ *   - bypass 路径（用户级凭据 / rotation 关闭）：worker 只挑出 taskId，本函数自行抢占。
+ *
+ * 重入安全：发现 status 已经不是 PENDING / RUNNING 时返回 raceLost=true 让 worker 跳过。
  */
 export async function runImageTask(taskId: string): Promise<{
   ok: boolean;
-  /** 如果别的进程已经在跑，返回 null 让上层跳过 */
+  /** 如果别的进程已经在跑，或状态不在 (PENDING/RUNNING) ，返回 raceLost=true 让上层跳过 */
   raceLost?: boolean;
+  /** 命中限流且任务已退回 PENDING 等待轮换 */
+  rateLimited?: boolean;
 }> {
-  // Step 1: 用条件 update 抢占任务（PENDING → RUNNING）
-  const claimed = await prisma.canvasImageTask.updateMany({
-    where: { id: taskId, status: "PENDING" },
-    data: { status: "RUNNING", startedAt: new Date(), attempts: { increment: 1 } },
+  // Step 1: 抢占。worker 在渠道池路径已经写了 RUNNING+credentialId+attempts++，本函数只对 PENDING 的尝试自己抢。
+  const preTask = await prisma.canvasImageTask.findUnique({
+    where: { id: taskId },
+    select: { status: true },
   });
+  if (!preTask) return { ok: false, raceLost: true };
 
-  if (claimed.count === 0) {
-    // 已经被别的 worker 抢走，或者状态不是 PENDING
+  if (preTask.status === "PENDING") {
+    const claimed = await prisma.canvasImageTask.updateMany({
+      where: { id: taskId, status: "PENDING" },
+      data: { status: "RUNNING", startedAt: new Date(), attempts: { increment: 1 } },
+    });
+    if (claimed.count === 0) {
+      return { ok: false, raceLost: true };
+    }
+  } else if (preTask.status !== "RUNNING") {
+    // SUCCEEDED / FAILED / 未知值：已是终态或异常状态，直接跳过
     return { ok: false, raceLost: true };
   }
 
@@ -243,6 +262,7 @@ export async function runImageTask(taskId: string): Promise<{
       size: task.size ?? undefined,
       quality: task.quality ?? undefined,
       upstreamProvider: imageConfig.provider,
+      credentialId: task.credentialId,
     });
 
     await logUserAction({
@@ -266,7 +286,58 @@ export async function runImageTask(taskId: string): Promise<{
   } catch (err) {
     const message = err instanceof Error ? err.message : "图片生成失败";
     const durationMs = Date.now() - startedAt;
-    console.error(`[image-task] ${task.id} failed:`, message);
+    const classified = classifyError(err);
+
+    // 限流路径：仅在 (有渠道、未绕过轮询、未触顶硬上限) 时退回 PENDING 让别的渠道接手
+    if (
+      classified.isRateLimit &&
+      task.credentialId &&
+      !task.bypassRotation &&
+      task.cooldownRetries < MAX_COOLDOWN_RETRIES
+    ) {
+      const cooldownMs = classified.retryAfterMs ?? DEFAULT_RATE_LIMIT_COOLDOWN_MS;
+      console.warn(
+        `[image-task] ${task.id} rate-limited on credential ${task.credentialId}, cooldown ${cooldownMs}ms, retry #${task.cooldownRetries + 1}`
+      );
+
+      // 给渠道打冷却（不论本任务接下来怎样，其它任务也不该再撞到这条 key）
+      await prisma.providerCredential.update({
+        where: { id: task.credentialId },
+        data: { cooldownUntil: new Date(Date.now() + cooldownMs) },
+      }).catch((e) => {
+        console.error(`[image-task] set cooldown failed for cred ${task.credentialId}:`, e);
+      });
+
+      // 把任务退回 PENDING；清掉 credentialId 让下一 tick 由其他渠道接走
+      await prisma.canvasImageTask.update({
+        where: { id: task.id },
+        data: {
+          status: "PENDING",
+          credentialId: null,
+          startedAt: null,
+          cooldownRetries: { increment: 1 },
+        },
+      });
+
+      await logCanvasCall({
+        userId: task.userId,
+        projectId: task.projectId,
+        callType: task.callType as "canvas_image" | "canvas_image_edit",
+        model: task.model,
+        durationMs,
+        status: "rate_limited",
+        error: message,
+        size: task.size ?? undefined,
+        quality: task.quality ?? undefined,
+        upstreamProvider: task.upstreamProvider ?? undefined,
+        credentialId: task.credentialId,
+      });
+
+      return { ok: false, rateLimited: true };
+    }
+
+    // 常规失败：归类记 failureKind，写 FAILED 终态
+    console.error(`[image-task] ${task.id} failed (${classified.kind}):`, message);
 
     await prisma.canvasImageTask.update({
       where: { id: task.id },
@@ -275,6 +346,7 @@ export async function runImageTask(taskId: string): Promise<{
         finishedAt: new Date(),
         durationMs,
         error: message.slice(0, 4000),
+        failureKind: classified.kind,
       },
     });
 
@@ -289,6 +361,7 @@ export async function runImageTask(taskId: string): Promise<{
       size: task.size ?? undefined,
       quality: task.quality ?? undefined,
       upstreamProvider: task.upstreamProvider ?? undefined,
+      credentialId: task.credentialId,
     });
 
     return { ok: false };

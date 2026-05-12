@@ -128,7 +128,8 @@ function credentialModelKeys(cred: { modelKeys?: unknown }): string[] | null {
   return modelKeys && modelKeys.length > 0 ? modelKeys : null
 }
 
-function credentialMatchesScope(
+/** worker 渠道调度时复用，判断一条凭据是否覆盖 (purpose, modelKey)。 */
+export function credentialMatchesScope(
   cred: { purposes?: unknown; modelKeys?: unknown },
   purpose: Purpose,
   modelKey: string

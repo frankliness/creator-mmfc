@@ -8,6 +8,7 @@ export const CANVAS_IMAGE_TASK_TIMEOUT_MS_KEY = "canvas_image_task_timeout_ms";
 export const CANVAS_IMAGE_USER_SHARE_CAP_PCT_KEY =
   "canvas_image_user_share_cap_pct";
 export const CANVAS_IMAGE_ZOMBIE_GRACE_MS_KEY = "canvas_image_zombie_grace_ms";
+export const CANVAS_IMAGE_ROTATION_ENABLED_KEY = "canvas_image_rotation_enabled";
 
 const DEFAULT_GLOBAL_CONCURRENCY = 15;
 const DEFAULT_USER_CONCURRENCY = 3;
@@ -16,6 +17,7 @@ const DEFAULT_TASK_TIMEOUT_MS = 1_800_000;
 const DEFAULT_USER_SHARE_CAP_PCT = 40;
 // 任务超过 timeout 后再等多久判定为僵尸；同时作为前端 budget 与 sweeper 的统一缓冲。
 const DEFAULT_ZOMBIE_GRACE_MS = 5 * 60_000;
+const DEFAULT_ROTATION_ENABLED = true;
 
 function readPositiveInt(value: unknown, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
@@ -81,6 +83,24 @@ export async function getCanvasImageZombieGraceMs(): Promise<number> {
       DEFAULT_ZOMBIE_GRACE_MS
     )
   );
+}
+
+/**
+ * 画布生图渠道轮询开关。
+ *   - true（默认）：worker 按 ProviderCredential.concurrency 在多个渠道之间分发任务，命中 429 自动冷却
+ *   - false：回退到 v1.4 行为，沿用 credential-resolver 选一条凭据，全任务受 global+user 并发约束
+ *
+ * 注：用户级 UserApiConfig 命中时任务被打 bypassRotation=true，不论本开关如何都不进渠道池。
+ */
+export async function isCanvasImageRotationEnabled(): Promise<boolean> {
+  const raw = await getGlobalConfig(CANVAS_IMAGE_ROTATION_ENABLED_KEY);
+  if (raw === undefined || raw === null) return DEFAULT_ROTATION_ENABLED;
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return raw !== 0;
+  const s = String(raw).trim().toLowerCase();
+  if (s === "false" || s === "0" || s === "off" || s === "no") return false;
+  if (s === "true" || s === "1" || s === "on" || s === "yes") return true;
+  return DEFAULT_ROTATION_ENABLED;
 }
 
 export async function getUserCanvasImageConcurrency(
