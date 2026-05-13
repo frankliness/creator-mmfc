@@ -1,6 +1,6 @@
 # Creator MMFC
 
-**版本：1.6.0**
+**版本：1.7.0**
 
 面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，可选 **GCS** 做对象存储。
 
@@ -29,7 +29,10 @@
 
 ### 用户端 `web/`
 
-- 邮箱密码注册 / 登录（NextAuth + Credentials）
+- 邮箱验证码注册（发送验证码 → 填码 → 创建账号）
+- 忘记密码：邮箱 + 验证码 + 新密码（`/forgot-password`）
+- 登录态修改密码：旧密码 + 新密码（`/account`）
+- 邮箱密码登录（NextAuth + Credentials）
 - 项目创建、项目列表、项目详情
 - 剧本转分镜、分镜克隆、批量提交视频任务、批量下载结果
 - `/ai-canvas` 入口与同源 Canvas API（聊天、配置、图片任务、素材访问）
@@ -52,6 +55,49 @@
 - Prompt 模板管理：版本历史、回滚、Schema 测试、按 provider 适配
 - 凭据池管理：CRUD、连通性探测、主用凭据、用途/模型粒度适用范围
 - 默认模型管理、模型注册表、用户行为日志、审计日志、Token 统计
+
+---
+
+### 版本 1.7.0 更新摘要
+
+**主要特性：邮箱验证码接入注册、忘记密码与登录态改密**
+
+#### 1. 数据层
+
+| 表 / 字段 | 变更 |
+|---|---|
+| `User.emailVerified` | 新增 `DateTime?`；新注册流程通过验证码后置为 `now()`，历史用户为 `null` |
+| `EmailVerificationCode`（新表） | 存储验证码的 bcrypt 哈希、用途（`REGISTER` / `RESET_PASSWORD`）、过期时间、核销时间、校验次数 |
+
+迁移文件：`web/prisma/migrations/20260512100000_email_verification/migration.sql`
+
+#### 2. 后端 API
+
+| 接口 | 说明 |
+|---|---|
+| `POST /api/auth/send-code` | 按 `purpose` 发送 6 位验证码；`REGISTER` 时邮箱已注册返 409；`RESET_PASSWORD` 时邮箱不存在悄悄返成功（防账号枚举）；同邮箱 60 秒内限发一次 |
+| `POST /api/auth/register` | 改造：必须先发验证码，提交时带 `code` 校验通过才建账 |
+| `POST /api/auth/reset-password` | 新增：邮箱 + 验证码 + 新密码（未登录可用） |
+| `POST /api/auth/change-password` | 新增：旧密码 + 新密码（需登录态，不发邮件） |
+
+验证码安全设计：bcrypt 哈希存储（明文不落库）、10 分钟 TTL、最多 5 次校验尝试、一次性核销不可复用。
+
+#### 3. 邮件发送
+
+- 新增 `web/src/lib/mailer.ts`：nodemailer SMTP 单例 transport，支持 HTML + 纯文本双版邮件模板
+- 新增 `web/src/lib/verification-code.ts`：验证码生成、发送频率控制、核销逻辑
+- 环境变量：`SMTP_HOST`、`SMTP_PORT`、`SMTP_SECURE`、`SMTP_USER`、`SMTP_PASS`、`SMTP_FROM`
+- 常见 SMTP：QQ 企业邮箱（`smtp.exmail.qq.com:465`）、阿里云（`smtpdm.aliyun.com:465`）、Gmail（`smtp.gmail.com:587`）
+
+#### 4. 前端页面
+
+| 页面 / 组件 | 变更 |
+|---|---|
+| `/register` | 新增"发送验证码"按钮 + 验证码输入框 + 60s 倒计时防连击 |
+| `/login` | 密码区右上新增"忘记密码？"链接 |
+| `/forgot-password` | 新页面：邮箱 + 验证码 + 新密码，重置后跳回登录 |
+| `(app)/account` | 新页面（需登录）：旧密码 + 新密码 + 确认密码，改密后强制退出重新登录 |
+| 导航栏用户名 | 由纯文本改为链接，点击进入 `/account` |
 
 ---
 
@@ -370,6 +416,7 @@ cd admin && npx ts-node prisma/seed.ts   # 自动从旧 GlobalConfig 回填 Prov
 ```bash
 cp .env.docker.example .env
 # 编辑 .env：至少填写 DB_PASSWORD、NEXTAUTH_SECRET、ENCRYPTION_KEY
+# 若要开启注册 / 忘记密码邮件，还需填写 SMTP_HOST / SMTP_USER / SMTP_PASS 等
 docker compose up -d --build
 ```
 
@@ -391,10 +438,19 @@ docker compose up -d --build
 5. `MMFC-canvas/src/views/Canvas.vue` 仍有项目复制 / 删除相关 `TODO`，说明画布项目操作闭环还不完整，建议补齐并加端到端验证。
 6. 根仓库仍有 `tmp/`、`.claude/` 等本地工作痕迹未纳入忽略规则；本次未自动入库，但建议后续明确 `.gitignore` 策略，避免日志和草稿误提交。
 
-### 升级已有部署（任意旧版本 → 1.6.0）
+### 升级已有部署（任意旧版本 → 1.7.0）
 
 1. 拉取最新代码
-2. 执行数据库迁移（在 `web/` 目录）：
+2. 在 `.env` / `.env.docker` 中补充 SMTP 配置（注册 / 忘记密码功能必须）：
+   ```env
+   SMTP_HOST=smtp.exmail.qq.com   # 换成你的 SMTP 服务商
+   SMTP_PORT=465
+   SMTP_SECURE=true
+   SMTP_USER=no-reply@yourdomain.com
+   SMTP_PASS=your-smtp-password
+   SMTP_FROM=no-reply@yourdomain.com
+   ```
+3. 执行数据库迁移（在 `web/` 目录）：
    ```bash
    npx prisma migrate deploy
    ```
@@ -406,6 +462,7 @@ docker compose up -d --build
    - `20260510000000_storyboard_seed`（1.5.2：Storyboard.seed，可按分镜覆盖项目 seed）
    - `20260510001000_canvas_ai_call_cost`（1.5.2：CanvasAiCall.costEstimate）
    - `20260512000000_canvas_image_channel_rotation`（1.6.0：渠道并发上限、冷却字段、任务渠道绑定）
+   - `20260512100000_email_verification`（1.7.0：EmailVerificationCode 表 + User.emailVerified）
 3. 执行 seed 补充初始数据（首次升级需要）：
    ```bash
    cd admin && npx ts-node prisma/seed.ts
