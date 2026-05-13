@@ -22,4 +22,16 @@ const router = createRouter({
   routes
 })
 
+router.afterEach((to) => {
+  if (typeof window === 'undefined' || window.parent === window) return
+  const projectId = to.name === 'Canvas' && typeof to.params.id === 'string' ? to.params.id : null
+  window.parent.postMessage(
+    {
+      type: 'creator-mmfc:canvas:route',
+      projectId
+    },
+    window.location.origin
+  )
+})
+
 export default router

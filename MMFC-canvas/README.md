@@ -1,5 +1,7 @@
 # MMFC Studio Canvas
 
+**版本：1.5.4**
+
 一个基于 Vue Flow 的可视化 AI 创作画布，接入 Creator MMFC 主站同源 `/api/canvas/*`：
 - 聊天、生图、图生图模型由主站 `ModelRegistry` 和 `ProviderCredential` 动态下发
 - 当前支持 Google Gemini、OpenAI / Azure OpenAI 及兼容 OpenAI 的自定义 provider

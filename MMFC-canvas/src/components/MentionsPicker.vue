@@ -27,11 +27,12 @@
           class="mentions-item"
           :class="{ active: index === selectedIndex }"
           @click="selectNode(node)"
-          @mouseenter="selectedIndex = index"
+          @mouseenter="handleItemMouseenter(node, index)"
+          @mouseleave="handleItemMouseleave(node)"
         >
           <!-- ImageNode 显示图片预览 -->
           <div v-if="node.type === 'image'" class="mentions-item-image">
-            <img v-if="node.data?.url" :src="node.data.url" :alt="node.data.publicProps?.name" />
+            <img v-if="node.data?.url" :src="node.data.url" :alt="getDisplayName(node)" />
             <div v-else class="mentions-item-image-placeholder">
               <n-icon :size="20"><ImageOutline /></n-icon>
             </div>
@@ -42,8 +43,7 @@
           </div>
           <div class="mentions-item-content">
             <div class="mentions-item-label">
-              <!-- ImageNode 优先显示 publicProps.name -->
-              {{ node.type === 'image' ? (node.data?.publicProps?.name || node.data?.label || '未命名') : (node.data?.label || node.id) }}
+              {{ getDisplayName(node) }}
             </div>
             <div class="mentions-item-id">{{ node.id }}</div>
           </div>
@@ -51,6 +51,10 @@
       </div>
       <div class="mentions-empty" v-else>
         <span>没有可引用的节点</span>
+      </div>
+      <div v-if="hoverPreviewNode?.data?.url" class="mentions-preview-panel">
+        <img :src="hoverPreviewNode.data.url" :alt="getDisplayName(hoverPreviewNode)" />
+        <div class="mentions-preview-label">{{ getDisplayName(hoverPreviewNode) }}</div>
       </div>
     </div>
   </n-popover>
@@ -95,6 +99,7 @@ const emit = defineEmits(['update:visible', 'select'])
 const searchQuery = ref('')
 const selectedIndex = ref(0)
 const isShow = ref(false)
+const hoverPreviewNode = ref(null)
 
 // Sync with prop | 与 prop 同步
 watch(() => props.visible, (newVal) => {
@@ -127,6 +132,13 @@ const isNodePublic = (node) => {
   return true
 }
 
+const getDisplayName = (node) => {
+  if (node.type === 'image') {
+    return node.data?.label || node.data?.publicProps?.name || '未命名'
+  }
+  return node.data?.label || node.id
+}
+
 // 可引用的节点列表
 const availableNodes = computed(() => {
   return nodes.value.filter(node => {
@@ -150,7 +162,7 @@ const filteredNodes = computed(() => {
 
   const query = searchQuery.value.toLowerCase()
   return availableNodes.value.filter(node => {
-    const label = node.data?.label?.toLowerCase() || ''
+    const label = getDisplayName(node).toLowerCase()
     const name = node.data?.publicProps?.name?.toLowerCase() || ''
     const id = node.id.toLowerCase()
     return label.includes(query) || name.includes(query) || id.includes(query)
@@ -167,9 +179,11 @@ watch(() => props.visible, (newVal) => {
   if (newVal) {
     searchQuery.value = ''
     selectedIndex.value = 0
+    hoverPreviewNode.value = null
     // 添加全局键盘事件监听
     document.addEventListener('keydown', handleGlobalKeydown)
   } else {
+    hoverPreviewNode.value = null
     // 移除全局键盘事件监听
     document.removeEventListener('keydown', handleGlobalKeydown)
   }
@@ -212,10 +226,7 @@ function getNodeIcon(type) {
 
 // 选择节点
 function selectNode(node) {
-  // ImageNode 优先使用 publicProps.name，其他节点使用 label
-  const displayName = node.type === 'image'
-    ? (node.data?.publicProps?.name || node.data?.label || node.id)
-    : (node.data?.label || node.id)
+  const displayName = getDisplayName(node)
 
   emit('select', {
     nodeId: node.id,
@@ -224,6 +235,17 @@ function selectNode(node) {
   })
   isShow.value = false
   emit('update:visible', false)
+}
+
+function handleItemMouseenter(node, index) {
+  selectedIndex.value = index
+  hoverPreviewNode.value = node.type === 'image' && node.data?.url ? node : null
+}
+
+function handleItemMouseleave(node) {
+  if (hoverPreviewNode.value?.id === node.id) {
+    hoverPreviewNode.value = null
+  }
 }
 
 // 键盘导航
@@ -251,12 +273,13 @@ function handleKeydown(event) {
 
 <style scoped>
 .mentions-picker {
-  width: 240px;
-  max-height: 300px;
+  position: relative;
+  width: 360px;
+  max-height: 380px;
   background: var(--card-bg, #fff);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .mentions-search {
@@ -265,14 +288,14 @@ function handleKeydown(event) {
 }
 
 .mentions-list {
-  max-height: 240px;
+  max-height: 320px;
   overflow-y: auto;
 }
 
 .mentions-item {
   display: flex;
-  align-items: center;
-  padding: 8px 12px;
+  align-items: flex-start;
+  padding: 10px 12px;
   cursor: pointer;
   transition: background-color 0.2s;
 }
@@ -295,18 +318,19 @@ function handleKeydown(event) {
 }
 
 .mentions-item-image {
-  width: 32px;
-  height: 32px;
+  width: 64px;
+  height: 64px;
   border-radius: 6px;
   overflow: hidden;
   margin-right: 10px;
   flex-shrink: 0;
+  background: var(--bg-color, #f0f0f0);
 }
 
 .mentions-item-image img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .mentions-item-image-placeholder {
@@ -346,5 +370,34 @@ function handleKeydown(event) {
   text-align: center;
   color: var(--text-secondary, #999);
   font-size: 13px;
+}
+
+.mentions-preview-panel {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 0;
+  width: 240px;
+  padding: 8px;
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border-color, #eee);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.mentions-preview-panel img {
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: var(--bg-color, #f0f0f0);
+}
+
+.mentions-preview-label {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-color, #333);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

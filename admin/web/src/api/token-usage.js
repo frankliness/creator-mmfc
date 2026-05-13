@@ -3,6 +3,8 @@ export const getSummary = (params) => request.get("/token-usage/summary", { para
 export const getByUser = (params) => request.get("/token-usage/by-user", { params });
 export const getByProvider = (params) => request.get("/token-usage/by-provider", { params });
 export const getDetail = (params) => request.get("/token-usage/detail", { params });
+export const exportTokenUsage = (params) => request.get("/token-usage/export", { params, responseType: "blob" });
+export const exportTokenUsageByUser = (params) => request.get("/token-usage/export/by-user", { params, responseType: "blob" });
 /** AI 画布：CanvasAiCall 聚合 */
 export const getCanvasByUser = (params) => request.get("/token-usage/canvas/by-user", { params });
 export const getCanvasByProject = (params) => request.get("/token-usage/canvas/by-project", { params });

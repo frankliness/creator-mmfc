@@ -222,7 +222,7 @@ const createMentionChip = (node) => {
   chip.className = 'mention-chip'
   chip.contentEditable = 'false'
   chip.dataset.nodeId = node.id
-  chip.dataset.label = node.data?.publicProps?.name || node.data?.label || '图片'
+  chip.dataset.label = node.data?.label || node.data?.publicProps?.name || '图片'
 
   if (node.data?.url) {
     const img = document.createElement('img')
@@ -306,7 +306,7 @@ const insertMentionChipDOM = (node, label = '') => {
 
   const fullText = getEditableText()
   let end = mentionSearchEnd.value > start ? mentionSearchEnd.value : start + 1
-  const displayLabel = label || node.data?.publicProps?.name || node.data?.label || ''
+  const displayLabel = label || node.data?.label || node.data?.publicProps?.name || ''
   if (displayLabel && fullText.slice(start + 1).startsWith(displayLabel)) {
     end = start + 1 + displayLabel.length
   }
@@ -461,7 +461,7 @@ const editorHtml = computed(() => {
   html = html.replace(/@\[([^\]|]+)(?:\|([^\]]+))?\]/g, (match, nodeId) => {
     const node = nodes.value.find(n => n.id === nodeId)
     if (node?.type === 'image' && node.data?.url) {
-      const displayName = node.data?.publicProps?.name || node.data?.label || '图片'
+      const displayName = node.data?.label || node.data?.publicProps?.name || '图片'
       return `<span class="mention-inline" data-node-id="${nodeId}"><img src="${node.data.url}" alt="${displayName}" />${displayName}</span>`
     }
     return match

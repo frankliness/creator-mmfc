@@ -19,6 +19,7 @@ const summaryQuerySchema = z.object({
 });
 
 const detailQuerySchema = paginationSchema.extend({
+  days: z.coerce.number().int().min(1).max(365).default(30),
   range: z.enum(["today"]).optional(),
   userId: z.string().optional(),
   userEmail: z.string().optional(),
@@ -78,6 +79,11 @@ function buildUserEmailExistsFilter(query: z.infer<typeof summaryQuerySchema> | 
         AND u."email" ILIKE ${`%${query.userEmail}%`}
     )
   `;
+}
+
+function escapeCsvCell(value: unknown) {
+  const text = value == null ? "" : String(value);
+  return `"${text.replace(/"/g, "\"\"")}"`;
 }
 
 export async function tokenUsageRoutes(app: FastifyInstance) {
@@ -182,9 +188,7 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
     if (query.projectId) where.projectId = query.projectId;
     if (query.provider) where.provider = query.provider;
     if (query.model) where.model = query.model;
-    if (query.from || query.to || query.range === "today") {
-      where.createdAt = { gte: fromDate, lt: toDate };
-    }
+    where.createdAt = { gte: fromDate, lt: toDate };
 
     const [data, total] = await Promise.all([
       prisma.tokenUsageLog.findMany({
@@ -210,9 +214,7 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
     if (query.projectId) where.projectId = query.projectId;
     if (query.provider) where.provider = query.provider;
     if (query.model) where.model = query.model;
-    if (query.from || query.to || query.range === "today") {
-      where.createdAt = { gte: fromDate, lt: toDate };
-    }
+    where.createdAt = { gte: fromDate, lt: toDate };
 
     const data = await prisma.tokenUsageLog.findMany({
       where,
@@ -235,13 +237,63 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
           r.outputTokens.toString(),
           r.totalTokens.toString(),
           r.createdAt.toISOString(),
-        ].join(",")
+        ]
+          .map(escapeCsvCell)
+          .join(",")
       )
       .join("\n");
 
     reply.header("Content-Type", "text/csv; charset=utf-8");
     reply.header("Content-Disposition", "attachment; filename=token-usage.csv");
-    return csvHeader + csvRows;
+    return `\uFEFF${csvHeader}${csvRows}`;
+  });
+
+  app.get("/export/by-user", async (request, reply) => {
+    const query = summaryQuerySchema.parse(request.query);
+    const { fromDate, toDate } = resolveTimeRange(query);
+
+    const data = await prisma.$queryRaw<
+      { email: string; name: string | null; provider: string; model: string; total: bigint; count: bigint }[]
+    >(Prisma.sql`
+      SELECT u."email",
+             u."name",
+             t."provider",
+             t."model",
+             SUM(t."totalTokens") AS total,
+             COUNT(*)::bigint AS count
+      FROM "TokenUsageLog" t
+      JOIN "User" u ON t."userId" = u."id"
+      WHERE t."createdAt" >= ${fromDate}
+        AND t."createdAt" < ${toDate}
+        ${query.userId ? Prisma.sql`AND t."userId" = ${query.userId}` : Prisma.empty}
+        ${buildUserEmailFilter(query, "u")}
+        ${query.projectId ? Prisma.sql`AND t."projectId" = ${query.projectId}` : Prisma.empty}
+        ${query.provider ? Prisma.sql`AND t."provider" = ${query.provider}` : Prisma.empty}
+        ${query.model ? Prisma.sql`AND t."model" = ${query.model}` : Prisma.empty}
+      GROUP BY t."userId", u."email", u."name", t."provider", t."model"
+      ORDER BY total DESC
+    `);
+
+    const csvHeader = "排名,用户邮箱,用户名称,Provider,模型,总Token,请求次数\n";
+    const csvRows = data
+      .map((r, index) =>
+        [
+          (index + 1).toString(),
+          r.email,
+          r.name,
+          r.provider,
+          r.model,
+          r.total.toString(),
+          r.count.toString(),
+        ]
+          .map(escapeCsvCell)
+          .join(",")
+      )
+      .join("\n");
+
+    reply.header("Content-Type", "text/csv; charset=utf-8");
+    reply.header("Content-Disposition", "attachment; filename=token-usage-by-user.csv");
+    return `\uFEFF${csvHeader}${csvRows}`;
   });
 
   app.get("/canvas/by-user", async (request) => {

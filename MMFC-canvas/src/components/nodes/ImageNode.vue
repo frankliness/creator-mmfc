@@ -222,13 +222,21 @@
         <!-- Upload placeholder | 上传占位 -->
         <div v-else class="rounded-xl bg-[var(--bg-tertiary)] border-2 border-dashed border-[var(--border-color)] p-3">
           <!-- Upload area | 上传区域 -->
-          <div class="aspect-video flex flex-col items-center justify-center gap-2 relative cursor-pointer hover:bg-[var(--bg-secondary)] rounded-lg transition-colors">
+          <div
+            class="aspect-video flex flex-col items-center justify-center gap-2 relative cursor-pointer hover:bg-[var(--bg-secondary)] rounded-lg transition-colors"
+            @click="uploadFileInputRef?.click()"
+          >
             <n-icon :size="32" class="text-[var(--text-secondary)]">
               <ImageOutline />
             </n-icon>
             <span class="text-sm text-[var(--text-secondary)] text-center">拖放图片或点击上传</span>
-            <input type="file" accept="image/*" class="absolute inset-0 opacity-0 cursor-pointer"
-              @change="handleFileUpload" />
+            <input
+              ref="uploadFileInputRef"
+              type="file"
+              accept="image/*"
+              class="hidden"
+              @change="handleFileUpload"
+            />
           </div>
           
           <!-- Divider | 分割线 -->
@@ -352,6 +360,7 @@ const labelInputRef = ref(null)
 // URL input state | URL 输入状态
 const urlInput = ref('')
 const urlLoading = ref(false)
+const uploadFileInputRef = ref(null)
 
 // Replace modal state | 替换弹窗状态
 const showReplaceModal = ref(false)
@@ -694,11 +703,19 @@ const fileToBase64 = (file) => {
 // 413（超 12MB）不走 fallback，直接提示用户压缩后重试；
 // 其他网络错误仍回退 data URL 保证基本可用。
 const ASSET_MAX_MB = 12
+const resetFileInput = (event) => {
+  const input = event?.target
+  if (input && typeof input === 'object' && 'value' in input) {
+    input.value = ''
+  }
+}
+
 const handleFileUpload = async (event) => {
   const file = event.target.files[0]
   if (!file) return
   if (file.size > ASSET_MAX_MB * 1024 * 1024) {
     window.$message?.error(`图片超过 ${ASSET_MAX_MB}MB，请压缩后重试`)
+    resetFileInput(event)
     return
   }
   const projectId = currentProjectId.value
@@ -718,6 +735,7 @@ const handleFileUpload = async (event) => {
     const is413 = err?.response?.status === 413 || /超过限制|too large|413/i.test(err?.message || '')
     if (is413) {
       window.$message?.error(`图片超过 ${ASSET_MAX_MB}MB，请压缩后重试`)
+      resetFileInput(event)
       return
     }
     console.warn('[ImageNode] uploadAsset failed, fallback to data URL:', err)
@@ -735,6 +753,8 @@ const handleFileUpload = async (event) => {
       console.error('File upload error:', e)
       window.$message?.error('图片上传失败' + (err?.message ? `：${err.message}` : ''))
     }
+  } finally {
+    resetFileInput(event)
   }
 }
 
@@ -780,6 +800,7 @@ const handleReplaceFileUpload = async (event) => {
   if (!file) return
   if (file.size > ASSET_MAX_MB * 1024 * 1024) {
     window.$message?.error(`图片超过 ${ASSET_MAX_MB}MB，请压缩后重试`)
+    resetFileInput(event)
     return
   }
   const projectId = currentProjectId.value
@@ -802,6 +823,7 @@ const handleReplaceFileUpload = async (event) => {
     const is413 = err?.response?.status === 413 || /超过限制|too large|413/i.test(err?.message || '')
     if (is413) {
       window.$message?.error(`图片超过 ${ASSET_MAX_MB}MB，请压缩后重试`)
+      resetFileInput(event)
       return
     }
     console.warn('[ImageNode] uploadAsset failed (replace), fallback to data URL:', err)
@@ -821,6 +843,8 @@ const handleReplaceFileUpload = async (event) => {
       console.error('File upload error:', e)
       window.$message?.error('图片替换失败' + (err?.message ? `：${err.message}` : ''))
     }
+  } finally {
+    resetFileInput(event)
   }
 }
 
@@ -865,7 +889,10 @@ const startEditLabel = () => {
 const finishEditLabel = () => {
   const newLabel = editingLabelValue.value.trim()
   if (newLabel && newLabel !== props.data?.label) {
-    updateNode(props.id, { label: newLabel })
+    updateNode(props.id, {
+      label: newLabel,
+      ...(isPublic.value ? { publicProps: { ...props.data.publicProps, name: newLabel } } : {})
+    })
   }
   isEditingLabel.value = false
 }

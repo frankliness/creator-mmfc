@@ -21,6 +21,15 @@
           <a-input v-model:value="filters.model" placeholder="模型" allow-clear style="width: 180px" />
           <a-button type="primary" @click="fetchAll">查询</a-button>
           <a-button @click="resetFilters">重置</a-button>
+          <a-dropdown :disabled="exportLoading">
+            <a-button :loading="exportLoading">导出</a-button>
+            <template #overlay>
+              <a-menu @click="handleExportMenuClick">
+                <a-menu-item key="detail">导出明细</a-menu-item>
+                <a-menu-item key="byUser">导出统计</a-menu-item>
+              </a-menu>
+            </template>
+          </a-dropdown>
         </a-space>
 
         <a-row :gutter="16" style="margin-bottom: 16px">
@@ -95,7 +104,8 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick } from "vue";
 import dayjs from "dayjs";
-import { getSummary, getByUser, getByProvider, getCanvasByUser, getCanvasByProject, getCanvasByModel } from "@/api/token-usage";
+import { message } from "ant-design-vue";
+import { exportTokenUsage, exportTokenUsageByUser, getSummary, getByUser, getByProvider, getCanvasByUser, getCanvasByProject, getCanvasByModel } from "@/api/token-usage";
 import * as echarts from "echarts";
 
 const activeTab = ref("all");
@@ -111,6 +121,7 @@ const filters = ref({
 });
 const trendChart = ref<HTMLElement>();
 const providerChart = ref<HTMLElement>();
+const exportLoading = ref(false);
 const userRanking = ref<any[]>([]);
 const canvasByUser = ref<any[]>([]);
 const canvasByProject = ref<any[]>([]);
@@ -169,6 +180,41 @@ function buildTokenParams() {
     ...(filters.value.provider ? { provider: filters.value.provider.trim() } : {}),
     ...(filters.value.model ? { model: filters.value.model.trim() } : {}),
   };
+}
+
+function buildExportFilename(type: "detail" | "byUser") {
+  const suffix = type === "detail" ? "detail" : "by-user";
+  return `token-usage-${suffix}-${dayjs().format("YYYYMMDD-HHmmss")}.csv`;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+}
+
+async function handleExport(type: "detail" | "byUser") {
+  exportLoading.value = true;
+  try {
+    const params = buildTokenParams();
+    const blob = type === "detail" ? await exportTokenUsage(params) : await exportTokenUsageByUser(params);
+    const file = blob instanceof Blob ? blob : new Blob([blob], { type: "text/csv;charset=utf-8" });
+    downloadBlob(file, buildExportFilename(type));
+    message.success("导出成功");
+  } finally {
+    exportLoading.value = false;
+  }
+}
+
+function handleExportMenuClick({ key }: { key: string }) {
+  if (key === "detail" || key === "byUser") {
+    handleExport(key);
+  }
 }
 
 async function fetchAll() {

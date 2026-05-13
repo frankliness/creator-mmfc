@@ -12,6 +12,12 @@ export const getByProvider = (params?: Record<string, unknown>) =>
 export const getDetail = (params?: Record<string, unknown>) =>
   request.get("/token-usage/detail", { params });
 
+export const exportTokenUsage = (params?: Record<string, unknown>) =>
+  request.get<Blob>("/token-usage/export", { params, responseType: "blob" });
+
+export const exportTokenUsageByUser = (params?: Record<string, unknown>) =>
+  request.get<Blob>("/token-usage/export/by-user", { params, responseType: "blob" });
+
 /** AI 画布：CanvasAiCall 聚合 */
 export const getCanvasByUser = (params?: Record<string, unknown>) =>
   request.get("/token-usage/canvas/by-user", { params });
