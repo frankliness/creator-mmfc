@@ -15,6 +15,8 @@ model User {
   status         UserStatus      @default(ACTIVE)
   quota          Json?
   remark         String?         @db.Text
+  /** 邮箱验证完成时间。null = 尚未通过邮箱验证。 */
+  emailVerified  DateTime?
   projects         Project[]
   apiConfigs       UserApiConfig[]
   tokenUsages      TokenUsageLog[]
@@ -22,6 +24,31 @@ model User {
   canvasProjects   CanvasProject[]
   canvasImageTasks CanvasImageTask[]
   createdAt        DateTime        @default(now())
+}
+
+/// 邮箱验证码记录。用于注册和忘记密码两个流程。
+/// - codeHash: 6 位数字验证码的 bcrypt 哈希（不存明文）
+/// - purpose: REGISTER / RESET_PASSWORD
+/// - expiresAt: 创建后 10 分钟过期
+/// - consumedAt: 成功核销时间，已核销不可复用
+/// - attempts: 校验次数，>=5 视为失效，防爆破
+model EmailVerificationCode {
+  id          String                       @id @default(uuid())
+  email       String
+  codeHash    String
+  purpose     EmailVerificationCodePurpose
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  attempts    Int                          @default(0)
+  createdAt   DateTime                     @default(now())
+
+  @@index([email, purpose, createdAt])
+  @@index([expiresAt])
+}
+
+enum EmailVerificationCodePurpose {
+  REGISTER
+  RESET_PASSWORD
 }
 
 enum UserStatus {

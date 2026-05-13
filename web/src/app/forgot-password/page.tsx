@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/card";
 import { toast } from "sonner";
 
-export default function RegisterPage() {
+export default function ForgotPasswordPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
@@ -38,14 +38,14 @@ export default function RegisterPage() {
       const res = await fetch("/api/auth/send-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, purpose: "REGISTER" }),
+        body: JSON.stringify({ email, purpose: "RESET_PASSWORD" }),
       });
       const data = await res.json();
       if (!res.ok) {
         toast.error(data.error || "验证码发送失败");
         return;
       }
-      toast.success("验证码已发送，请查收邮箱");
+      toast.success("如该邮箱已注册，验证码已发送");
       setCooldown(60);
     } finally {
       setSendingCode(false);
@@ -57,14 +57,13 @@ export default function RegisterPage() {
     setLoading(true);
     const formData = new FormData(e.currentTarget);
 
-    const res = await fetch("/api/auth/register", {
+    const res = await fetch("/api/auth/reset-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         email: formData.get("email"),
-        password: formData.get("password"),
-        name: formData.get("name"),
         code: formData.get("code"),
+        newPassword: formData.get("newPassword"),
       }),
     });
 
@@ -72,11 +71,11 @@ export default function RegisterPage() {
     const data = await res.json();
 
     if (!res.ok) {
-      toast.error(data.error || "注册失败");
+      toast.error(data.error || "重置失败");
       return;
     }
 
-    toast.success("注册成功，请登录");
+    toast.success("密码已重置，请用新密码登录");
     router.push("/login");
   }
 
@@ -84,15 +83,11 @@ export default function RegisterPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl font-bold">创建账号</CardTitle>
-          <CardDescription>加入 Seedance Studio 创作团队</CardDescription>
+          <CardTitle className="text-2xl font-bold">重置密码</CardTitle>
+          <CardDescription>通过邮箱验证码设置新密码</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="name">姓名</Label>
-              <Input id="name" name="name" placeholder="你的名字" required />
-            </div>
             <div className="space-y-2">
               <Label htmlFor="email">邮箱</Label>
               <Input
@@ -133,10 +128,10 @@ export default function RegisterPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">密码</Label>
+              <Label htmlFor="newPassword">新密码</Label>
               <Input
-                id="password"
-                name="password"
+                id="newPassword"
+                name="newPassword"
                 type="password"
                 placeholder="至少 6 位"
                 required
@@ -144,13 +139,13 @@ export default function RegisterPage() {
               />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "注册中..." : "注册"}
+              {loading ? "提交中..." : "重置密码"}
             </Button>
           </form>
           <p className="mt-4 text-center text-sm text-muted-foreground">
-            已有账号？{" "}
+            想起来了？{" "}
             <Link href="/login" className="underline hover:text-foreground">
-              登录
+              返回登录
             </Link>
           </p>
         </CardContent>

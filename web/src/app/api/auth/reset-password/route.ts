@@ -1,24 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { logUserAction } from "@/lib/user-action-logger";
-import { z } from "zod";
 import {
   consumeVerificationCode,
   normalizeEmail,
 } from "@/lib/verification-code";
 
-const registerSchema = z.object({
+const schema = z.object({
   email: z.string().email(),
-  password: z.string().min(6),
-  name: z.string().min(1),
   code: z.string().regex(/^\d{6}$/, "验证码应为 6 位数字"),
+  newPassword: z.string().min(6),
 });
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const parsed = registerSchema.safeParse(body);
+    const parsed = schema.safeParse(await req.json());
     if (!parsed.success) {
       return NextResponse.json(
         { error: "参数错误", details: parsed.error.flatten() },
@@ -26,17 +24,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { password, name, code } = parsed.data;
+    const { code, newPassword } = parsed.data;
     const email = normalizeEmail(parsed.data.email);
 
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing) {
-      return NextResponse.json({ error: "邮箱已注册" }, { status: 409 });
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return NextResponse.json(
+        { error: "验证码无效或已过期" },
+        { status: 400 }
+      );
     }
 
     const codeOk = await consumeVerificationCode({
       email,
-      purpose: "REGISTER",
+      purpose: "RESET_PASSWORD",
       code,
     });
     if (!codeOk) {
@@ -46,30 +47,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const passwordHash = await hash(password, 12);
-    const user = await prisma.user.create({
-      data: { email, passwordHash, name, emailVerified: new Date() },
+    const passwordHash = await hash(newPassword, 12);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash },
     });
 
     await logUserAction({
       userId: user.id,
       category: "auth",
-      action: "auth.register",
+      action: "auth.password.reset",
       targetType: "User",
       targetId: user.id,
-      route: "/api/auth/register",
-      metadata: {
-        email: user.email,
-        name: user.name,
-      },
+      route: "/api/auth/reset-password",
+      metadata: { email: user.email },
     });
 
-    return NextResponse.json(
-      { id: user.id, email: user.email, name: user.name },
-      { status: 201 }
-    );
+    return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error("Register error:", err);
+    console.error("reset-password error:", err);
     return NextResponse.json({ error: "服务器内部错误" }, { status: 500 });
   }
 }
