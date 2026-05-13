@@ -81,6 +81,13 @@ services:
       VIDEO_STORAGE_PATH: /data/videos
       # 画布生成 / 上传图片的存储目录（持久化卷 canvas_images 挂载到此处）
       IMAGE_STORAGE_PATH: ${IMAGE_STORAGE_PATH:-/data/canvas-images}
+      # 邮箱验证码 SMTP
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
 
   web-worker:
     build:

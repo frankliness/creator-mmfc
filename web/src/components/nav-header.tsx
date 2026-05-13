@@ -47,9 +47,12 @@ export function NavHeader() {
         <div className="flex items-center gap-4">
           {session?.user && (
             <>
-              <span className="text-sm text-muted-foreground">
+              <Link
+                href="/account"
+                className="text-sm text-muted-foreground hover:text-foreground"
+              >
                 {session.user.name}
-              </span>
+              </Link>
               <Button
                 variant="ghost"
                 size="sm"
