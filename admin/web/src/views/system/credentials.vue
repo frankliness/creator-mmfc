@@ -9,10 +9,11 @@
     />
 
     <a-space style="margin-bottom: 12px">
-      <a-button type="primary" @click="openCreate">+ 新增凭据</a-button>
+      <a-button v-if="canWrite" type="primary" @click="openCreate">+ 新增凭据</a-button>
       <a-select v-model:value="filterProvider" allow-clear placeholder="筛选 Provider" style="width: 200px" @change="fetchData">
         <a-select-option v-for="p in PROVIDER_TYPES" :key="p.key" :value="p.key">{{ p.label }}</a-select-option>
       </a-select>
+      <a-tag v-if="!canWrite" color="default">只读模式（无 credentials.write 权限）</a-tag>
     </a-space>
 
     <a-table
@@ -29,7 +30,8 @@
         </template>
         <template v-if="column.key === 'isPrimary'">
           <a-tag v-if="record.isPrimary" color="gold">主用</a-tag>
-          <a-button v-else type="link" size="small" @click="setPrimary(record)">设为主用</a-button>
+          <a-button v-else-if="canWrite" type="link" size="small" @click="setPrimary(record)">设为主用</a-button>
+          <span v-else style="color: rgba(0,0,0,.25)">—</span>
         </template>
         <template v-if="column.key === 'purposes'">
           <a-space size="small" wrap>
@@ -43,7 +45,7 @@
           </a-space>
         </template>
         <template v-if="column.key === 'isActive'">
-          <a-switch :checked="record.isActive" @change="() => toggle(record)" />
+          <a-switch :checked="record.isActive" :disabled="!canWrite" @change="() => toggle(record)" />
         </template>
         <template v-if="column.key === 'concurrency'">
           <span>{{ record.concurrency }}</span>
@@ -55,7 +57,7 @@
           <span v-else style="color: #999">—</span>
         </template>
         <template v-if="column.key === 'action'">
-          <a-space size="small">
+          <a-space v-if="canWrite" size="small">
             <a-button type="link" size="small" @click="testOne(record)" :loading="testingId === record.id">
               测试
             </a-button>
@@ -64,6 +66,7 @@
               <a-button type="link" danger size="small">删除</a-button>
             </a-popconfirm>
           </a-space>
+          <span v-else style="color: rgba(0,0,0,.25)">—</span>
         </template>
       </template>
     </a-table>
@@ -169,6 +172,10 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from "vue";
 import { message } from "ant-design-vue";
+import { useUserStore } from "@/store/user";
+
+const userStore = useUserStore();
+const canWrite = computed(() => userStore.canWrite("credentials"));
 import {
   listCredentials,
   createCredential,

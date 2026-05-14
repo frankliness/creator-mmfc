@@ -10,9 +10,12 @@
 
     <a-tabs v-model:activeKey="activeCategory" type="card" @change="fetchData">
       <a-tab-pane v-for="c in CATEGORIES" :key="c.key" :tab="c.label">
-        <a-button type="primary" @click="openCreate" style="margin-bottom: 12px">
+        <a-button v-if="canWrite" type="primary" @click="openCreate" style="margin-bottom: 12px">
           + 新增模型
         </a-button>
+        <a-tag v-else color="default" style="margin-bottom: 12px; display: inline-block">
+          只读模式（无 modelRegistry.write 权限）
+        </a-tag>
         <a-table
           :columns="columns"
           :data-source="rows"
@@ -23,7 +26,7 @@
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'isActive'">
-              <a-switch :checked="record.isActive" @change="() => toggle(record)" />
+              <a-switch :checked="record.isActive" :disabled="!canWrite" @change="() => toggle(record)" />
             </template>
             <template v-if="column.key === 'providers'">
               <a-space wrap size="small">
@@ -40,12 +43,13 @@
               </a-space>
             </template>
             <template v-if="column.key === 'action'">
-              <a-space size="small">
+              <a-space v-if="canWrite" size="small">
                 <a-button type="link" size="small" @click="openEdit(record)">编辑</a-button>
                 <a-popconfirm title="确认删除？" @confirm="() => remove(record)">
                   <a-button type="link" danger size="small">删除</a-button>
                 </a-popconfirm>
               </a-space>
+              <span v-else style="color: rgba(0,0,0,.25)">—</span>
             </template>
           </template>
         </a-table>
@@ -163,6 +167,10 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from "vue";
+import { useUserStore } from "@/store/user";
+
+const userStore = useUserStore();
+const canWrite = computed(() => userStore.canWrite("modelRegistry"));
 import { message } from "ant-design-vue";
 import {
   listModels,

@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../../common/prisma.js";
 import { decrypt } from "../../common/crypto.js";
-import { requireRole } from "../../common/guards/rbac.js";
+import { requirePermission } from "../../common/guards/permission.js";
 
 const PURPOSES = ["chat", "storyboard", "canvas_image", "canvas_image_edit"] as const;
 type Purpose = (typeof PURPOSES)[number];
@@ -160,7 +160,8 @@ async function probe(config: ResolvedConfig): Promise<ProbeResult> {
 }
 
 export async function connectionTestRoutes(app: FastifyInstance) {
-  app.addHook("preHandler", requireRole("ADMIN"));
+  // PRD §14.11：连接测试统一归入 credentials.write
+  app.addHook("preHandler", requirePermission("credentials", "write"));
 
   app.post("/", async (request, reply) => {
     const parsed = testSchema.safeParse(request.body);

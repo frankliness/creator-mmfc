@@ -6,10 +6,11 @@
       @back="$router.back()"
     >
       <template #extra>
-        <a-space>
+        <a-space v-if="canWrite">
           <a-button @click="handlePublish" type="primary">发布</a-button>
           <a-button @click="handleSave">保存</a-button>
         </a-space>
+        <a-tag v-else color="default">只读模式（无 prompts.write 权限）</a-tag>
       </template>
     </a-page-header>
 
@@ -19,6 +20,7 @@
           <a-textarea
             v-model:value="content"
             :rows="20"
+            :disabled="!canWrite"
             style="font-family: monospace; font-size: 13px"
           />
         </a-card>
@@ -45,9 +47,15 @@
               />
             </a-form-item>
             <a-form-item>
-              <a-button :loading="testingSchema" type="primary" @click="handleTestSchema">
+              <a-button
+                v-if="canWrite"
+                :loading="testingSchema"
+                type="primary"
+                @click="handleTestSchema"
+              >
                 测试 Schema
               </a-button>
+              <span v-else style="color: rgba(0,0,0,.45)">无写权限，无法测试 Schema</span>
             </a-form-item>
           </a-form>
           <div v-if="schemaTestResult">
@@ -101,6 +109,7 @@
             style="width: 100%"
             placeholder="留空 = 通用，所有 provider 都生效"
             allow-clear
+            :disabled="!canWrite"
           >
             <a-select-option value="openai">OpenAI Compatible</a-select-option>
             <a-select-option value="azure_openai">Azure OpenAI</a-select-option>
@@ -108,6 +117,7 @@
             <a-select-option value="custom">Custom</a-select-option>
           </a-select>
           <a-button
+            v-if="canWrite"
             type="primary"
             ghost
             size="small"
@@ -122,7 +132,7 @@
         </a-card>
 
         <a-card title="版本历史" size="small" style="margin-top: 16px">
-          <a-input v-model:value="changeNote" placeholder="变更说明" style="margin-bottom: 8px" />
+          <a-input v-model:value="changeNote" placeholder="变更说明" style="margin-bottom: 8px" :disabled="!canWrite" />
           <a-timeline>
             <a-timeline-item v-for="v in versions" :key="v.id">
               <a-space>
@@ -132,9 +142,12 @@
               <p v-if="v.changeNote" style="margin: 4px 0 0; color: #666; font-size: 12px">
                 {{ v.changeNote }}
               </p>
-              <a-button type="link" size="small" @click="handleRollback(v.version)"
-                >回滚到此版本</a-button
-              >
+              <a-button
+                v-if="canWrite"
+                type="link"
+                size="small"
+                @click="handleRollback(v.version)"
+              >回滚到此版本</a-button>
             </a-timeline-item>
           </a-timeline>
         </a-card>
@@ -144,9 +157,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { message } from "ant-design-vue";
+import { useUserStore } from "@/store/user";
+
+const userStore = useUserStore();
+const canWrite = computed(() => userStore.canWrite("prompts"));
 import {
   getPrompt,
   updatePrompt,

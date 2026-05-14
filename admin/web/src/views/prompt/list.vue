@@ -1,6 +1,6 @@
 <template>
   <div>
-    <a-button type="primary" @click="showCreate = true" style="margin-bottom: 16px">新建模板</a-button>
+    <a-button v-if="canWritePrompts" type="primary" @click="showCreate = true" style="margin-bottom: 16px">新建模板</a-button>
     <a-alert
       type="info"
       show-icon
@@ -91,9 +91,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from "vue";
+import { ref, reactive, computed, onMounted } from "vue";
 import { message } from "ant-design-vue";
 import { getPrompts, createPrompt } from "@/api/prompts";
+import { useUserStore } from "@/store/user";
+
+const userStore = useUserStore();
+const canWritePrompts = computed(() => userStore.canWrite("prompts"));
 
 const data = ref([]);
 const loading = ref(false);

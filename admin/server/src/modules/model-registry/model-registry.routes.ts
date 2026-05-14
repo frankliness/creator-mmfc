@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../../common/prisma.js";
-import { requireAuth, requireRole } from "../../common/guards/rbac.js";
+import { requirePermission } from "../../common/guards/permission.js";
 import { createAuditLog } from "../../common/audit.js";
 
 const CATEGORIES = ["chat", "canvas_image", "canvas_image_edit", "storyboard"] as const;
@@ -28,7 +28,7 @@ const createSchema = baseFields;
 const updateSchema = baseFields.partial();
 
 export async function modelRegistryRoutes(app: FastifyInstance) {
-  app.addHook("preHandler", requireAuth());
+  app.addHook("preHandler", requirePermission("modelRegistry", "read"));
 
   app.get("/", async (request) => {
     const { category } = request.query as { category?: string };
@@ -49,7 +49,7 @@ export async function modelRegistryRoutes(app: FastifyInstance) {
     return item;
   });
 
-  app.post("/", { preHandler: [requireRole("ADMIN")] }, async (request, reply) => {
+  app.post("/", { preHandler: [requirePermission("modelRegistry", "write")] }, async (request, reply) => {
     const parsed = createSchema.safeParse(request.body);
     if (!parsed.success)
       return reply.code(400).send({ error: "参数错误", details: parsed.error.flatten() });
@@ -94,7 +94,7 @@ export async function modelRegistryRoutes(app: FastifyInstance) {
     return created;
   });
 
-  app.patch("/:id", { preHandler: [requireRole("ADMIN")] }, async (request, reply) => {
+  app.patch("/:id", { preHandler: [requirePermission("modelRegistry", "write")] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const parsed = updateSchema.safeParse(request.body);
     if (!parsed.success)
@@ -136,7 +136,7 @@ export async function modelRegistryRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  app.patch("/:id/toggle", { preHandler: [requireRole("ADMIN")] }, async (request, reply) => {
+  app.patch("/:id/toggle", { preHandler: [requirePermission("modelRegistry", "write")] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const existing = await prisma.modelRegistry.findUnique({ where: { id } });
     if (!existing) return reply.code(404).send({ error: "模型不存在" });
@@ -160,7 +160,7 @@ export async function modelRegistryRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  app.delete("/:id", { preHandler: [requireRole("ADMIN")] }, async (request, reply) => {
+  app.delete("/:id", { preHandler: [requirePermission("modelRegistry", "write")] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const existing = await prisma.modelRegistry.findUnique({ where: { id } });
     if (!existing) return reply.code(404).send({ error: "模型不存在" });

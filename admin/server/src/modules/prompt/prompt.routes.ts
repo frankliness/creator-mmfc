@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../../common/prisma.js";
-import { requireAuth, requireRole } from "../../common/guards/rbac.js";
+import { requirePermission } from "../../common/guards/permission.js";
 import { createAuditLog } from "../../common/audit.js";
 import { decrypt } from "../../common/crypto.js";
 
@@ -59,7 +59,7 @@ const schemaTestSchema = z.object({
 });
 
 export async function promptRoutes(app: FastifyInstance) {
-  app.addHook("preHandler", requireAuth());
+  app.addHook("preHandler", requirePermission("prompts", "read"));
 
   app.get("/", async () => {
     return prisma.promptTemplate.findMany({
@@ -91,7 +91,7 @@ export async function promptRoutes(app: FastifyInstance) {
     return template;
   });
 
-  app.post("/", { preHandler: [requireRole("ADMIN")] }, async (request, reply) => {
+  app.post("/", { preHandler: [requirePermission("prompts", "write")] }, async (request, reply) => {
     const parsed = createSchema.safeParse(request.body);
     if (!parsed.success)
       return reply.code(400).send({ error: "参数错误", details: parsed.error.flatten() });
@@ -164,7 +164,7 @@ export async function promptRoutes(app: FastifyInstance) {
     return template;
   });
 
-  app.patch("/:id", { preHandler: [requireRole("ADMIN")] }, async (request, reply) => {
+  app.patch("/:id", { preHandler: [requirePermission("prompts", "write")] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const parsed = updateSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "参数错误" });
@@ -219,7 +219,7 @@ export async function promptRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  app.post("/:id/publish", { preHandler: [requireRole("ADMIN")] }, async (request, reply) => {
+  app.post("/:id/publish", { preHandler: [requirePermission("prompts", "write")] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const template = await prisma.promptTemplate.findUnique({ where: { id } });
     if (!template) return reply.code(404).send({ error: "模板不存在" });
@@ -239,7 +239,7 @@ export async function promptRoutes(app: FastifyInstance) {
     return { message: "模板已发布" };
   });
 
-  app.post("/:id/rollback/:version", { preHandler: [requireRole("ADMIN")] }, async (request, reply) => {
+  app.post("/:id/rollback/:version", { preHandler: [requirePermission("prompts", "write")] }, async (request, reply) => {
     const { id, version } = request.params as { id: string; version: string };
     const versionNum = parseInt(version);
 
@@ -296,7 +296,7 @@ export async function promptRoutes(app: FastifyInstance) {
   // POST /api/admin/prompts/test-schema
   // Body: { schema, purpose: "storyboard", sampleScript? }
   // ─────────────────────────────────────────────────────────────────
-  app.post("/test-schema", async (request, reply) => {
+  app.post("/test-schema", { preHandler: [requirePermission("prompts", "write")] }, async (request, reply) => {
     const parsed = schemaTestSchema.safeParse(request.body as SchemaTestBody);
     if (!parsed.success)
       return reply.code(400).send({ error: "参数错误", details: parsed.error.flatten() });

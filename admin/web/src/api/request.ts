@@ -17,7 +17,9 @@ instance.interceptors.response.use(
     if (status === 401) {
       localStorage.removeItem("admin_token");
       router.push("/login");
-      message.error("登录已过期，请重新登录");
+      // 优先显示后端返回的错误消息（如登录时的"用户名或密码错误"），没有则显示通用提示
+      const msg = error.response?.data?.error || "登录已过期，请重新登录";
+      message.error(msg);
     } else if (status === 403) {
       message.error("权限不足");
     } else {

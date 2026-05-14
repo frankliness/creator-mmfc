@@ -1,6 +1,6 @@
 # Creator MMFC
 
-**版本：1.7.1**
+**版本：1.8.0**
 
 面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，可选 **GCS** 做对象存储。
 
@@ -55,6 +55,64 @@
 - Prompt 模板管理：版本历史、回滚、Schema 测试、按 provider 适配
 - 凭据池管理：CRUD、连通性探测、主用凭据、用途/模型粒度适用范围
 - 默认模型管理、模型注册表、用户行为日志、审计日志、Token 统计
+
+---
+
+### 版本 1.8.0 更新摘要
+
+**主要特性：管理后台细粒度权限管理系统**
+
+#### 1. 数据模型扩展
+
+- `AdminUser` 新增 `permissions JSONB?` 与 `deletedAt DateTime?` 字段，支持软删除与权限矩阵存储
+- 新增 `@@index([deletedAt])` 索引优化软删过滤性能
+
+#### 2. 权限矩阵体系（14 个分栏 × 2 操作）
+
+14 个管理模块分别为：
+- **业务管理**：dashboard、users、projects、canvasProjects、canvasChannelStats、tasks、prompts、tokenUsage
+- **日志与审计**：userActionLogs、auditLogs
+- **系统配置**：credentials、globalConfig、modelRegistry、defaults
+
+每个分栏支持 `read`（查看）与 `write`（修改）两类操作。SUPER_ADMIN 默认拥有全部权限且不受矩阵限制；ADMIN 与 OPERATOR 可通过权限矩阵进行精细控制。
+
+#### 3. 后端权限守卫
+
+- 新增 `admin/server/src/common/guards/permission.ts`：实现 `requirePermission(section, action)` 与 `requireSuperAdmin()` 守卫
+- 每次请求自动查 DB 校验 admin 的 `isActive` 与 `deletedAt` 状态，禁用 / 软删的账号旧 token **立即失效**（不依赖 JWT 过期）
+- 14 个业务模块路由逐一迁移为细粒度权限校验（从原有的角色等级制）
+
+#### 4. 管理员管理重构
+
+- **新建管理页面**：[admin-list.vue](admin/web/src/views/system/admin-list.vue) 支持管理员的 CRUD、权限矩阵编辑、禁用 / 软删、重置密码
+- **权限矩阵编辑器**：[AdminPermissionMatrix.vue](admin/web/src/components/AdminPermissionMatrix.vue) 提供表格式矩阵编辑 UI，支持联动（write 开启自动 read；read 关闭自动 write 关）、风险指示、批量操作
+- **保护机制**：
+  - 自我保护：禁止修改自己的角色、禁用自己的账号
+  - 最后一个 SUPER_ADMIN 保护：系统必须至少保留一个启用状态的 SUPER_ADMIN，不允许删除 / 禁用 / 降级最后一个
+
+#### 5. 前端权限集成
+
+- **用户 Store 增强**：`admin/web/src/store/user.ts` 新增 `permissions` 字段与 `canRead(section)` / `canWrite(section)` 辅助函数
+- **菜单动态过滤**：根据用户权限自动隐藏无权限的菜单项；"系统设置"子菜单全空时整组隐藏
+- **路由权限守卫**：`admin/web/src/router/index.ts` 新增 `meta.permission` 标注，访问无权限路由自动跳转 `/403`
+- **403 错误页**：新增 `admin/web/src/views/403.vue` 友好提示无权限访问
+- **按钮 gating**：业务页面写操作按钮受 `canWrite()` 控制，权限不足时按钮隐藏或禁用
+
+#### 6. 数据库迁移
+
+- 迁移文件：`admin/prisma/migrations/20260513000000_baseline_init/` 与 `20260513000001_admin_permissions_and_soft_delete/`
+- 数据回填脚本：`admin/prisma/seeds/backfill-permissions.ts`，按 PRD 模板为现有 ADMIN / OPERATOR 用户回填默认权限矩阵
+- 启用 `prisma migrate` 流程：新增 `admin/prisma/MIGRATION_GUIDE.md` 说明基线化步骤
+
+#### 7. 审计日志完善
+
+- admin-mgmt 所有操作均写审计日志，action 分类为 `admin.create` / `admin.update` / `admin.updateRole` / `admin.toggleActive` / `admin.softDelete` / `admin.resetPassword` / `admin.updatePermissions` 等
+- 密码字段永不进审计记录（存 `<redacted>` 占位符）
+
+#### 8. Bug 修复
+
+- **Zod v4 验证兼容性**：权限矩阵 schema 改用 `z.record(z.string(), ...)` 替代 `z.enum([...])`，支持前端发送部分权限对象（不强制所有 14 个分栏都提交）
+- **401 错误消息传递**：请求拦截器现在正确展示后端返回的错误信息（如"用户名或密码错误"），替代之前的通用"登录已过期"提示
 
 ---
 

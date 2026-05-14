@@ -2,7 +2,7 @@
   <div v-if="user">
     <a-page-header :title="user.name" :sub-title="user.email" @back="$router.back()">
       <template #extra>
-        <a-space>
+        <a-space v-if="canWriteUsers">
           <a-popconfirm title="确认重置密码？" @confirm="handleResetPassword">
             <a-button danger>重置密码</a-button>
           </a-popconfirm>
@@ -25,20 +25,36 @@
           <a-descriptions-item label="Token 总消耗">{{ user.totalTokens }}</a-descriptions-item>
           <a-descriptions-item label="注册时间">{{ new Date(user.createdAt).toLocaleString() }}</a-descriptions-item>
           <a-descriptions-item label="备注" :span="2">
-            <a-textarea v-model:value="remark" :rows="2" />
-            <a-button type="primary" size="small" @click="handleUpdateRemark" style="margin-top: 8px">保存备注</a-button>
+            <a-textarea v-model:value="remark" :rows="2" :disabled="!canWriteUsers" />
+            <a-button
+              v-if="canWriteUsers"
+              type="primary"
+              size="small"
+              @click="handleUpdateRemark"
+              style="margin-top: 8px"
+            >保存备注</a-button>
           </a-descriptions-item>
         </a-descriptions>
       </a-tab-pane>
 
       <a-tab-pane key="api-config" tab="API 配置">
-        <a-button type="primary" @click="showConfigModal = true" style="margin-bottom: 16px">新增配置</a-button>
+        <a-button
+          v-if="canWriteUsers"
+          type="primary"
+          @click="showConfigModal = true"
+          style="margin-bottom: 16px"
+        >新增配置</a-button>
         <a-table :columns="configColumns" :data-source="configs" row-key="id" size="small">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'action'">
-              <a-popconfirm title="确认删除？" @confirm="handleDeleteConfig(record.id)">
+              <a-popconfirm
+                v-if="canWriteUsers"
+                title="确认删除？"
+                @confirm="handleDeleteConfig(record.id)"
+              >
                 <a-button type="link" danger size="small">删除</a-button>
               </a-popconfirm>
+              <span v-else style="color: rgba(0,0,0,.25)">无权限</span>
             </template>
           </template>
         </a-table>
@@ -116,7 +132,8 @@
             <a-input-number v-model:value="canvasQuotaForm.canvas_image_concurrency" :min="1" :max="100" style="width: 100%" placeholder="留空使用全局默认" />
           </a-form-item>
           <a-form-item>
-            <a-button type="primary" @click="saveCanvasQuota">保存配额</a-button>
+            <a-button v-if="canWriteUsers" type="primary" @click="saveCanvasQuota">保存配额</a-button>
+            <span v-else style="color: rgba(0,0,0,.45)">无修改权限</span>
           </a-form-item>
         </a-form>
       </a-tab-pane>
@@ -125,10 +142,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from "vue";
+import { ref, reactive, computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { message } from "ant-design-vue";
 import { getUser, updateUser, resetPassword, getUserApiConfigs, createApiConfig, deleteApiConfig } from "@/api/users";
+import { useUserStore } from "@/store/user";
+
+const userStore = useUserStore();
+const canWriteUsers = computed(() => userStore.canWrite("users"));
 
 const route = useRoute();
 const userId = route.params.id as string;

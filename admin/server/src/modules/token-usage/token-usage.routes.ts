@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../common/prisma.js";
-import { requireAuth } from "../../common/guards/rbac.js";
+import { requirePermission } from "../../common/guards/permission.js";
 import { paginationSchema, paginate, paginatedResponse } from "../../common/pagination.js";
 
 const summaryQuerySchema = z.object({
@@ -87,7 +87,7 @@ function escapeCsvCell(value: unknown) {
 }
 
 export async function tokenUsageRoutes(app: FastifyInstance) {
-  app.addHook("preHandler", requireAuth());
+  app.addHook("preHandler", requirePermission("tokenUsage", "read"));
 
   app.get("/summary", async (request) => {
     const query = summaryQuerySchema.parse(request.query);

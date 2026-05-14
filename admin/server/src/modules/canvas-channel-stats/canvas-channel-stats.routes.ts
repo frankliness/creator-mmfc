@@ -17,7 +17,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../../common/prisma.js";
-import { requireAuth } from "../../common/guards/rbac.js";
+import { requirePermission } from "../../common/guards/permission.js";
 
 const querySchema = z.object({
   /** 时间窗口（分钟），默认 60，最大 1440（24h） */
@@ -25,7 +25,7 @@ const querySchema = z.object({
 });
 
 export async function canvasChannelStatsRoutes(app: FastifyInstance) {
-  app.addHook("preHandler", requireAuth());
+  app.addHook("preHandler", requirePermission("canvasChannelStats", "read"));
 
   app.get("/", async (request, reply) => {
     const parsed = querySchema.safeParse(request.query);

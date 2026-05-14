@@ -17,7 +17,12 @@
         <template v-if="column.key === 'action'">
           <a-space>
             <a-button type="link" size="small" @click="$router.push(`/tasks/${record.id}`)">详情</a-button>
-            <a-button v-if="record.status === 'FAILED'" type="link" size="small" @click="handleRetry(record.id)">重试</a-button>
+            <a-button
+              v-if="record.status === 'FAILED' && canRetry"
+              type="link"
+              size="small"
+              @click="handleRetry(record.id)"
+            >重试</a-button>
           </a-space>
         </template>
       </template>
@@ -26,9 +31,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { message } from "ant-design-vue";
 import { getTasks, retryTask } from "@/api/tasks";
+import { useUserStore } from "@/store/user";
+
+const userStore = useUserStore();
+const canRetry = computed(() => userStore.canWrite("tasks"));
 
 const data = ref([]);
 const loading = ref(false);

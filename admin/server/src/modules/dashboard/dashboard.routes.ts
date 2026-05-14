@@ -1,11 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../../common/prisma.js";
-import { requireAuth } from "../../common/guards/rbac.js";
+import { requirePermission } from "../../common/guards/permission.js";
 import { Prisma } from "@prisma/client";
 
 export async function dashboardRoutes(app: FastifyInstance) {
-  app.addHook("preHandler", requireAuth());
+  app.addHook("preHandler", requirePermission("dashboard", "read"));
 
   app.get("/overview", async () => {
     const now = new Date();

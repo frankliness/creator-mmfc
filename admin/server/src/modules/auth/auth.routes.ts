@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { hash, compare } from "bcryptjs";
 import { prisma } from "../../common/prisma.js";
-import { requireAuth } from "../../common/guards/rbac.js";
+import { requireLogin } from "../../common/guards/permission.js";
+import { normalizePermissions } from "../../common/permissions/sections.js";
 
 const loginSchema = z.object({
   username: z.string().min(1),
@@ -20,8 +21,11 @@ export async function authRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: "参数错误" });
 
     const { username, password } = parsed.data;
-    const admin = await prisma.adminUser.findUnique({ where: { username } });
+    const admin = await prisma.adminUser.findFirst({
+      where: { username, deletedAt: null },
+    });
 
+    // 软删除账号、禁用账号、密码错误统一返回相同提示，避免账号探测
     if (!admin || !admin.isActive) {
       return reply.code(401).send({ error: "用户名或密码错误" });
     }
@@ -53,6 +57,8 @@ export async function authRoutes(app: FastifyInstance) {
         username: admin.username,
         displayName: admin.displayName,
         role: admin.role,
+        isActive: admin.isActive,
+        permissions: normalizePermissions(admin.permissions ?? {}),
       },
     };
   });
@@ -69,7 +75,9 @@ export async function authRoutes(app: FastifyInstance) {
         return reply.code(401).send({ error: "无效的 token 类型" });
       }
 
-      const admin = await prisma.adminUser.findUnique({ where: { id: decoded.id } });
+      const admin = await prisma.adminUser.findFirst({
+        where: { id: decoded.id, deletedAt: null },
+      });
       if (!admin || !admin.isActive) {
         return reply.code(401).send({ error: "账号不存在或已禁用" });
       }
@@ -85,23 +93,27 @@ export async function authRoutes(app: FastifyInstance) {
     }
   });
 
-  app.get("/profile", { preHandler: [requireAuth()] }, async (request) => {
-    const { id } = request.user as { id: string };
-    const admin = await prisma.adminUser.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        username: true,
-        displayName: true,
-        role: true,
-        lastLoginAt: true,
-        createdAt: true,
-      },
+  app.get("/profile", { preHandler: [requireLogin()] }, async (request) => {
+    const admin = request.adminUser!;
+    // requireLogin 已加载 admin 实时状态并规范化 permissions；这里直接返回。
+    // 仍读一次 DB 以补全 lastLoginAt / createdAt（不在守卫上下文中）。
+    const extra = await prisma.adminUser.findUnique({
+      where: { id: admin.id },
+      select: { lastLoginAt: true, createdAt: true },
     });
-    return admin;
+    return {
+      id: admin.id,
+      username: admin.username,
+      displayName: admin.displayName,
+      role: admin.role,
+      isActive: admin.isActive,
+      permissions: admin.permissions,
+      lastLoginAt: extra?.lastLoginAt ?? null,
+      createdAt: extra?.createdAt ?? null,
+    };
   });
 
-  app.patch("/password", { preHandler: [requireAuth()] }, async (request, reply) => {
+  app.patch("/password", { preHandler: [requireLogin()] }, async (request, reply) => {
     const { id } = request.user as { id: string };
     const parsed = changePasswordSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "参数错误" });

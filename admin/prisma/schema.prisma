@@ -170,16 +170,22 @@ enum TaskStatus {
 // ──────────────────────────────────────────────
 
 model AdminUser {
-  id           String    @id @default(uuid())
-  username     String    @unique
+  id           String     @id @default(uuid())
+  username     String     @unique
   passwordHash String
   displayName  String
-  role         AdminRole @default(OPERATOR)
-  isActive     Boolean   @default(true)
+  role         AdminRole  @default(OPERATOR)
+  isActive     Boolean    @default(true)
+  // 分栏权限矩阵；SUPER_ADMIN 不依赖此字段，普通管理员未授权字段视为无权限
+  permissions  Json?
+  // 软删除时间；非空即视为已删除。登录/refresh/profile 必须过滤 deletedAt = null
+  deletedAt    DateTime?
   lastLoginAt  DateTime?
   auditLogs    AuditLog[]
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([deletedAt])
 }
 
 enum AdminRole {

@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { hash } from "bcryptjs";
 import { prisma } from "../../common/prisma.js";
-import { requireAuth, requireRole } from "../../common/guards/rbac.js";
+import { requirePermission } from "../../common/guards/permission.js";
 import { paginationSchema, paginate, paginatedResponse } from "../../common/pagination.js";
 import { createAuditLog } from "../../common/audit.js";
 
@@ -20,7 +20,7 @@ const listQuerySchema = paginationSchema.extend({
 });
 
 export async function userRoutes(app: FastifyInstance) {
-  app.addHook("preHandler", requireAuth());
+  app.addHook("preHandler", requirePermission("users", "read"));
 
   app.get("/", async (request) => {
     const query = listQuerySchema.parse(request.query);
@@ -98,7 +98,7 @@ export async function userRoutes(app: FastifyInstance) {
     };
   });
 
-  app.patch("/:id", { preHandler: [requireRole("ADMIN")] }, async (request, reply) => {
+  app.patch("/:id", { preHandler: [requirePermission("users", "write")] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const parsed = updateUserSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "参数错误" });
@@ -131,7 +131,7 @@ export async function userRoutes(app: FastifyInstance) {
     return after;
   });
 
-  app.post("/:id/reset-password", { preHandler: [requireRole("ADMIN")] }, async (request, reply) => {
+  app.post("/:id/reset-password", { preHandler: [requirePermission("users", "write")] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) return reply.code(404).send({ error: "用户不存在" });

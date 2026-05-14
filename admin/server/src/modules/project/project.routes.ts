@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { prisma } from "../../common/prisma.js";
-import { requireAuth, requireRole } from "../../common/guards/rbac.js";
+import { requirePermission } from "../../common/guards/permission.js";
 import { paginationSchema, paginate, paginatedResponse } from "../../common/pagination.js";
 import { createAuditLog } from "../../common/audit.js";
 import { Prisma } from "@prisma/client";
@@ -13,7 +13,7 @@ const listQuerySchema = paginationSchema.extend({
 });
 
 export async function projectRoutes(app: FastifyInstance) {
-  app.addHook("preHandler", requireAuth());
+  app.addHook("preHandler", requirePermission("projects", "read"));
 
   app.get("/", async (request) => {
     const query = listQuerySchema.parse(request.query);
@@ -139,7 +139,7 @@ export async function projectRoutes(app: FastifyInstance) {
     };
   });
 
-  app.delete("/:id", { preHandler: [requireRole("ADMIN")] }, async (request, reply) => {
+  app.delete("/:id", { preHandler: [requirePermission("projects", "write")] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const project = await prisma.project.findUnique({ where: { id } });
     if (!project) return reply.code(404).send({ error: "项目不存在" });

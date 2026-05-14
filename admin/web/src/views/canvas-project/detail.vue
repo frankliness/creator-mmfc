@@ -22,12 +22,13 @@
 
     <a-card title="状态管理" size="small" style="margin-bottom: 16px">
       <a-space>
-        <a-select v-model:value="statusEdit" style="width: 160px">
+        <a-select v-model:value="statusEdit" style="width: 160px" :disabled="!canWrite">
           <a-select-option value="ACTIVE">ACTIVE</a-select-option>
           <a-select-option value="ARCHIVED">ARCHIVED</a-select-option>
           <a-select-option value="DELETED">DELETED</a-select-option>
         </a-select>
-        <a-button type="primary" @click="handlePatch">保存状态</a-button>
+        <a-button v-if="canWrite" type="primary" @click="handlePatch">保存状态</a-button>
+        <span v-else style="color: rgba(0,0,0,.45)">无修改权限</span>
       </a-space>
     </a-card>
 
@@ -41,7 +42,7 @@
       />
     </a-card>
 
-    <a-card title="危险操作" size="small">
+    <a-card v-if="canWrite" title="危险操作" size="small">
       <a-popconfirm title="将删除数据库记录、CanvasAiCall、相关 TokenUsageLog，并尝试删除本地图片文件。确认？" @confirm="handleDelete">
         <a-button danger>硬删除画布项目</a-button>
       </a-popconfirm>
@@ -50,10 +51,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { message } from "ant-design-vue";
 import { getCanvasProject, patchCanvasProject, deleteCanvasProject } from "@/api/canvas-projects";
+import { useUserStore } from "@/store/user";
+
+const userStore = useUserStore();
+const canWrite = computed(() => userStore.canWrite("canvasProjects"));
 
 const route = useRoute();
 const router = useRouter();

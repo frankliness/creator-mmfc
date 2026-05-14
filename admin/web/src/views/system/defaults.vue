@@ -48,9 +48,17 @@
               </div>
             </a-form-item>
 
-            <a-button type="primary" :loading="saving === p.key" @click="save(p.key)">
+            <a-button
+              v-if="canWrite"
+              type="primary"
+              :loading="saving === p.key"
+              @click="save(p.key)"
+            >
               保存默认模型
             </a-button>
+            <a-tag v-else color="default">
+              无 defaults 写权限（同时需要 globalConfig.write）
+            </a-tag>
           </a-form>
         </a-card>
       </a-tab-pane>
@@ -62,6 +70,13 @@
 import { ref, reactive, computed, onMounted } from "vue";
 import { message } from "ant-design-vue";
 import { listModels, type ModelEntry, type ModelCategory } from "@/api/model-registry";
+import { useUserStore } from "@/store/user";
+
+const userStore = useUserStore();
+// 保存默认模型实际会触发 globalConfig 写操作，两个权限同时要求
+const canWrite = computed(() =>
+  userStore.canWrite("defaults") && userStore.canWrite("globalConfig"),
+);
 import { listCredentials, type Credential } from "@/api/credentials";
 import { updateGlobalConfig } from "@/api/global-config";
 

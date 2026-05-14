@@ -5,54 +5,25 @@
         {{ collapsed ? "MC" : "MMFC Admin" }}
       </div>
       <a-menu theme="dark" mode="inline" :selected-keys="selectedKeys" @click="onMenuClick">
-        <a-menu-item key="/dashboard">
-          <template #icon><DashboardOutlined /></template>
-          <span>仪表盘</span>
+        <a-menu-item
+          v-for="item in mainMenuItems"
+          :key="item.routePath"
+        >
+          <template #icon><component :is="iconFor(item.key)" /></template>
+          <span>{{ item.label }}</span>
         </a-menu-item>
-        <a-menu-item key="/users">
-          <template #icon><UserOutlined /></template>
-          <span>用户管理</span>
-        </a-menu-item>
-        <a-menu-item key="/projects">
-          <template #icon><ProjectOutlined /></template>
-          <span>项目管理</span>
-        </a-menu-item>
-        <a-menu-item key="/canvas-projects">
-          <template #icon><AppstoreOutlined /></template>
-          <span>AI 画布项目</span>
-        </a-menu-item>
-        <a-menu-item key="/canvas-channel-stats">
-          <template #icon><BarChartOutlined /></template>
-          <span>画布渠道统计</span>
-        </a-menu-item>
-        <a-menu-item key="/tasks">
-          <template #icon><ThunderboltOutlined /></template>
-          <span>任务管理</span>
-        </a-menu-item>
-        <a-menu-item key="/prompts">
-          <template #icon><FileTextOutlined /></template>
-          <span>Prompt 管理</span>
-        </a-menu-item>
-        <a-menu-item key="/token-usage">
-          <template #icon><BarChartOutlined /></template>
-          <span>Token 统计</span>
-        </a-menu-item>
-        <a-menu-item key="/user-action-logs">
-          <template #icon><HistoryOutlined /></template>
-          <span>用户操作日志</span>
-        </a-menu-item>
-        <a-menu-item key="/audit-logs">
-          <template #icon><AuditOutlined /></template>
-          <span>审计日志</span>
-        </a-menu-item>
-        <a-sub-menu key="system">
+        <a-sub-menu v-if="showSystemMenu" key="system">
           <template #icon><SettingOutlined /></template>
           <template #title>系统设置</template>
-          <a-menu-item key="/system/credentials">凭据池</a-menu-item>
-          <a-menu-item key="/system/defaults">默认模型</a-menu-item>
-          <a-menu-item key="/system/model-registry">模型注册表</a-menu-item>
-          <a-menu-item key="/system/global-config">全局配置（高级）</a-menu-item>
-          <a-menu-item key="/system/admins">管理员管理</a-menu-item>
+          <a-menu-item
+            v-for="item in systemMenuItems"
+            :key="item.routePath"
+          >
+            {{ item.label }}
+          </a-menu-item>
+          <a-menu-item v-if="userStore.isSuper()" key="/system/admins">
+            管理员管理
+          </a-menu-item>
         </a-sub-menu>
       </a-menu>
     </a-layout-sider>
@@ -75,6 +46,14 @@
       </a-layout-header>
       <a-layout-content style="margin: 16px">
         <div style="padding: 24px; background: #fff; min-height: 360px; border-radius: 8px">
+          <a-alert
+            v-if="!userStore.hasAnyAccess && !userStore.isSuper()"
+            type="warning"
+            show-icon
+            message="当前账号暂无后台访问权限"
+            description="请联系超级管理员开通对应分栏权限。"
+            style="margin-bottom: 16px"
+          />
           <router-view />
         </div>
       </a-layout-content>
@@ -86,6 +65,7 @@
 import { ref, computed, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useUserStore } from "@/store/user";
+import { ADMIN_SECTIONS, type SectionKey } from "@/config/admin-sections";
 import {
   DashboardOutlined, UserOutlined, ProjectOutlined, AppstoreOutlined,
   ThunderboltOutlined, FileTextOutlined, BarChartOutlined, HistoryOutlined,
@@ -96,6 +76,35 @@ const router = useRouter();
 const route = useRoute();
 const userStore = useUserStore();
 const collapsed = ref(false);
+
+const ICONS: Partial<Record<SectionKey, unknown>> = {
+  dashboard: DashboardOutlined,
+  users: UserOutlined,
+  projects: ProjectOutlined,
+  canvasProjects: AppstoreOutlined,
+  canvasChannelStats: BarChartOutlined,
+  tasks: ThunderboltOutlined,
+  prompts: FileTextOutlined,
+  tokenUsage: BarChartOutlined,
+  userActionLogs: HistoryOutlined,
+  auditLogs: AuditOutlined,
+};
+
+function iconFor(key: SectionKey) {
+  return ICONS[key] ?? AppstoreOutlined;
+}
+
+const mainMenuItems = computed(() =>
+  ADMIN_SECTIONS.filter((s) => s.group === "main" && userStore.canRead(s.key)),
+);
+
+const systemMenuItems = computed(() =>
+  ADMIN_SECTIONS.filter((s) => s.group === "system" && userStore.canRead(s.key)),
+);
+
+const showSystemMenu = computed(
+  () => systemMenuItems.value.length > 0 || userStore.isSuper(),
+);
 
 const selectedKeys = computed(() => {
   const path = route.path;
@@ -117,5 +126,6 @@ function handleLogout() {
   router.push("/login");
 }
 
-onMounted(() => { userStore.fetchProfile(); });
+// 路由守卫已经 ensureProfile，但首屏从 / 进来时仍主动触发一次确保 layout 拿到最新数据
+onMounted(() => { userStore.ensureProfile(); });
 </script>

@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../common/prisma.js";
-import { requireAuth } from "../../common/guards/rbac.js";
+import { requirePermission } from "../../common/guards/permission.js";
 import { paginationSchema, paginate, paginatedResponse } from "../../common/pagination.js";
 
 const listQuerySchema = paginationSchema.extend({
@@ -18,7 +18,7 @@ const listQuerySchema = paginationSchema.extend({
 });
 
 export async function userActionLogRoutes(app: FastifyInstance) {
-  app.addHook("preHandler", requireAuth());
+  app.addHook("preHandler", requirePermission("userActionLogs", "read"));
 
   app.get("/", async (request) => {
     const query = listQuerySchema.parse(request.query);

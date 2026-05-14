@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { prisma } from "../../common/prisma.js";
-import { requireAuth } from "../../common/guards/rbac.js";
+import { requirePermission } from "../../common/guards/permission.js";
 import { paginationSchema, paginate, paginatedResponse } from "../../common/pagination.js";
 import { z } from "zod";
 
@@ -14,7 +14,7 @@ const listQuerySchema = paginationSchema.extend({
 });
 
 export async function taskRoutes(app: FastifyInstance) {
-  app.addHook("preHandler", requireAuth());
+  app.addHook("preHandler", requirePermission("tasks", "read"));
 
   app.get("/", async (request) => {
     const query = listQuerySchema.parse(request.query);
@@ -103,7 +103,7 @@ export async function taskRoutes(app: FastifyInstance) {
     return task;
   });
 
-  app.post("/:id/retry", async (request, reply) => {
+  app.post("/:id/retry", { preHandler: [requirePermission("tasks", "write")] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const task = await prisma.generationTask.findUnique({ where: { id } });
     if (!task) return reply.code(404).send({ error: "任务不存在" });

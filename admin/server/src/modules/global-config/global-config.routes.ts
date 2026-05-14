@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../../common/prisma.js";
-import { requireRole } from "../../common/guards/rbac.js";
+import { requirePermission } from "../../common/guards/permission.js";
 import { encrypt, decrypt, maskApiKey } from "../../common/crypto.js";
 import { createAuditLog } from "../../common/audit.js";
 
@@ -12,7 +12,7 @@ const updateSchema = z.object({
 });
 
 export async function globalConfigRoutes(app: FastifyInstance) {
-  app.addHook("preHandler", requireRole("ADMIN"));
+  app.addHook("preHandler", requirePermission("globalConfig", "read"));
 
   app.get("/", async () => {
     const configs = await prisma.globalConfig.findMany({ orderBy: { key: "asc" } });
@@ -29,7 +29,7 @@ export async function globalConfigRoutes(app: FastifyInstance) {
     });
   });
 
-  app.patch("/:key", { preHandler: [requireRole("SUPER_ADMIN")] }, async (request, reply) => {
+  app.patch("/:key", { preHandler: [requirePermission("globalConfig", "write")] }, async (request, reply) => {
     const { key } = request.params as { key: string };
     const parsed = updateSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "参数错误" });

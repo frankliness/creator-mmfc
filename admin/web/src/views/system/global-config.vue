@@ -57,9 +57,15 @@
           </span>
         </a-form-item>
         <a-space>
-          <a-button type="primary" :loading="savingConcurrency" @click="saveConcurrencyConfig">
+          <a-button
+            v-if="canWrite"
+            type="primary"
+            :loading="savingConcurrency"
+            @click="saveConcurrencyConfig"
+          >
             保存画布并发配置
           </a-button>
+          <a-tag v-else color="default">无 globalConfig.write 权限</a-tag>
           <span style="color: #999; font-size: 12px">
             用户详情页可覆盖单个用户的生图并发上限。
           </span>
@@ -72,7 +78,7 @@
         <template v-if="column.key === 'value'">
           <a-space>
             <span>{{ record.value }}</span>
-            <a-button type="link" size="small" @click="openEdit(record)">编辑</a-button>
+            <a-button v-if="canWrite" type="link" size="small" @click="openEdit(record)">编辑</a-button>
           </a-space>
         </template>
         <template v-if="column.key === 'encrypted'">
@@ -94,9 +100,13 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted } from "vue";
+import { reactive, ref, computed, onMounted } from "vue";
 import { message } from "ant-design-vue";
 import { getGlobalConfigs, updateGlobalConfig } from "@/api/global-config";
+import { useUserStore } from "@/store/user";
+
+const userStore = useUserStore();
+const canWrite = computed(() => userStore.canWrite("globalConfig"));
 
 const CANVAS_IMAGE_GLOBAL_CONCURRENCY_KEY = "canvas_image_global_concurrency";
 const CANVAS_IMAGE_DEFAULT_USER_CONCURRENCY_KEY = "canvas_image_default_user_concurrency";
