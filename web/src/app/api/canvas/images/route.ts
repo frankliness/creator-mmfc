@@ -19,6 +19,14 @@ import { authError, requireCanvasUser } from "@/lib/canvas/canvas-auth";
 import { checkImageQuota } from "@/lib/canvas/canvas-quota";
 import { getCapabilities, supportsImageEdit } from "@/lib/llm/capabilities";
 import { isCanvasImageRotationEnabled } from "@/lib/canvas/concurrency-config";
+import { getMembership } from "@/lib/series-membership";
+import {
+  findBudget,
+  BUDGET_SCOPE_CANVAS_IMAGE,
+  METRIC_SUCCESS_COUNT,
+  CANVAS_GLOBAL_PROVIDER,
+  CANVAS_GLOBAL_MODEL_KEY,
+} from "@/lib/series-budget";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,12 +76,27 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // v1.9.0：Canvas 项目可能归属 Series；legacy 项目走原 owner 检查
   const project = await prisma.canvasProject.findFirst({
-    where: { id: parsed.data.projectId, userId: auth.user.id, status: { not: "DELETED" } },
-    select: { id: true },
+    where: {
+      id: parsed.data.projectId,
+      status: { not: "DELETED" },
+      OR: [
+        { userId: auth.user.id },
+        // 若 seriesId 非空，必须是 Series 成员，下面单独校验
+        { seriesId: { not: null } },
+      ],
+    },
+    select: { id: true, userId: true, seriesId: true },
   });
   if (!project) {
     return NextResponse.json({ error: "项目不存在" }, { status: 404 });
+  }
+  // 若是 Series Canvas，强校验成员
+  if (project.seriesId && project.userId !== auth.user.id) {
+    const m = await getMembership(auth.user.id, project.seriesId);
+    if (!m) return NextResponse.json({ error: "不是该项目的成员", code: "NOT_A_MEMBER" }, { status: 403 });
+    if (m.role === "VIEWER") return NextResponse.json({ error: "你是 VIEWER，不可写入" }, { status: 403 });
   }
 
   // 配额检查需要把 in-flight（PENDING/RUNNING）任务计入：避免用户狂提交
@@ -91,6 +114,37 @@ export async function POST(req: NextRequest) {
 
   const isEdit = !!parsed.data.refImages?.length;
   const callType = isEdit ? "canvas_image_edit" : "canvas_image";
+
+  // v1.9.0：Canvas 成功次数硬上限检查（全局，不区分模型）
+  if (project.seriesId) {
+    const budget = await findBudget(prisma, {
+      seriesId: project.seriesId,
+      provider: CANVAS_GLOBAL_PROVIDER,
+      modelKey: CANVAS_GLOBAL_MODEL_KEY,
+      budgetScope: BUDGET_SCOPE_CANVAS_IMAGE,
+      metricType: METRIC_SUCCESS_COUNT,
+    });
+    if (!budget) {
+      return NextResponse.json(
+        { error: "项目未配置 Canvas 生图预算，请联系 Admin 配置", code: "BUDGET_NOT_CONFIGURED" },
+        { status: 503 },
+      );
+    }
+    if (budget.status !== "ACTIVE") {
+      return NextResponse.json({ error: `Canvas 预算 ${budget.status}`, code: "BUDGET_NOT_ACTIVE" }, { status: 423 });
+    }
+    if (budget.committedUsage >= budget.totalBudget) {
+      return NextResponse.json(
+        {
+          error: `Canvas 成功次数已达上限（${budget.committedUsage}/${budget.totalBudget}），请联系导演或 Admin 增加预算`,
+          code: "CANVAS_BUDGET_EXHAUSTED",
+          committed: budget.committedUsage.toString(),
+          total: budget.totalBudget.toString(),
+        },
+        { status: 429 },
+      );
+    }
+  }
 
   // 能力预检：图生图需要的模型不支持时立即返回
   if (isEdit && getCapabilities(parsed.data.model) && !supportsImageEdit(parsed.data.model)) {

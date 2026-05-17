@@ -33,6 +33,12 @@
       size="small"
     >
       <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'user'">
+          <span v-if="record.user">
+            {{ record.user.name ? `${record.user.name} (${record.user.email})` : record.user.email }}
+          </span>
+          <span v-else style="color: #999">—</span>
+        </template>
         <template v-if="column.key === 'status'">
           {{ record.metadata?.status || "-" }}
         </template>
@@ -65,7 +71,7 @@ const search = ref("");
 const pagination = ref({ current: 1, pageSize: 20, total: 0, showSizeChanger: true });
 
 const columns = [
-  { title: "用户", dataIndex: ["user", "email"], width: 180, ellipsis: true },
+  { title: "用户", key: "user", width: 200, ellipsis: true },
   { title: "分类", dataIndex: "category", width: 120 },
   { title: "操作", dataIndex: "action", width: 240, ellipsis: true },
   { title: "目标类型", dataIndex: "targetType", width: 140 },

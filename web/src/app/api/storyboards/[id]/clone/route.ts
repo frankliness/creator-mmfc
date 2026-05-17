@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { logUserAction } from "@/lib/user-action-logger";
+import { getMembership } from "@/lib/series-membership";
 
 export async function POST(
   _req: NextRequest,
@@ -16,11 +17,22 @@ export async function POST(
 
   const source = await prisma.storyboard.findUnique({
     where: { id },
-    include: { project: { select: { userId: true, id: true } } },
+    include: { project: { select: { userId: true, id: true, seriesId: true, lockedReason: true } } },
   });
 
-  if (!source || source.project.userId !== session.user.id) {
+  if (!source) {
     return NextResponse.json({ error: "分镜不存在" }, { status: 404 });
+  }
+  if (source.project.lockedReason) {
+    return NextResponse.json({ error: "集数已锁定" }, { status: 423 });
+  }
+  let allowed = source.project.userId === session.user.id;
+  if (!allowed && source.project.seriesId) {
+    const m = await getMembership(session.user.id, source.project.seriesId);
+    if (m && (m.role === "OWNER" || m.role === "PRODUCER")) allowed = true;
+  }
+  if (!allowed) {
+    return NextResponse.json({ error: "无权操作该分镜" }, { status: 403 });
   }
 
   // Determine next version suffix: s001 -> s001_1 -> s001_2

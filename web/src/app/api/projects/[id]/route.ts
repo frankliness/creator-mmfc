@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { logUserAction } from "@/lib/user-action-logger";
+import { getMembership } from "@/lib/series-membership";
 import { z } from "zod";
 
 const patchSchema = z.object({
@@ -26,8 +27,8 @@ export async function GET(
 
   const { id } = await params;
 
-  const project = await prisma.project.findFirst({
-    where: { id, userId: session.user.id },
+  const project = await prisma.project.findUnique({
+    where: { id },
     include: {
       storyboards: {
         orderBy: { sortOrder: "asc" },
@@ -42,7 +43,19 @@ export async function GET(
     return NextResponse.json({ error: "项目不存在" }, { status: 404 });
   }
 
-  return NextResponse.json(project);
+  // Determine role / access
+  let myRole: string;
+  if (project.userId === session.user.id) {
+    myRole = "LEGACY_OWNER";
+  } else if (project.seriesId) {
+    const m = await getMembership(session.user.id, project.seriesId);
+    if (!m) return NextResponse.json({ error: "无权限" }, { status: 403 });
+    myRole = m.role;
+  } else {
+    return NextResponse.json({ error: "无权限" }, { status: 403 });
+  }
+
+  return NextResponse.json({ ...project, myRole });
 }
 
 export async function PATCH(
@@ -56,12 +69,23 @@ export async function PATCH(
 
   const { id } = await params;
 
-  const existing = await prisma.project.findFirst({
-    where: { id, userId: session.user.id },
+  const existing = await prisma.project.findUnique({
+    where: { id },
   });
 
   if (!existing) {
     return NextResponse.json({ error: "项目不存在" }, { status: 404 });
+  }
+
+  // Check write access
+  if (existing.userId !== session.user.id) {
+    if (!existing.seriesId) {
+      return NextResponse.json({ error: "无权限" }, { status: 403 });
+    }
+    const m = await getMembership(session.user.id, existing.seriesId);
+    if (!m) return NextResponse.json({ error: "无权限" }, { status: 403 });
+    if (m.role === "VIEWER") return NextResponse.json({ error: "VIEWER 无写权限" }, { status: 403 });
+    if (existing.lockedReason) return NextResponse.json({ error: `项目已锁定：${existing.lockedReason}` }, { status: 423 });
   }
 
   if (["GENERATING_STORYBOARDS", "GENERATING_VIDEOS"].includes(existing.status)) {
@@ -83,6 +107,20 @@ export async function PATCH(
   const patch = Object.fromEntries(
     Object.entries(parsed.data).filter(([, v]) => v !== undefined)
   ) as Record<string, unknown>;
+
+  // v1.9.1：Series 项目的 style/ratio/resolution 由 Series 全局设置管控，集数 PATCH 一律拒绝写
+  if (existing.seriesId) {
+    const blocked = ["style", "ratio", "resolution"].filter((k) => k in patch);
+    if (blocked.length > 0) {
+      return NextResponse.json(
+        {
+          error: `字段 ${blocked.join("、")} 由 Series 全局设置控制，请在 Series 设置中统一修改`,
+          code: "FIELD_OWNED_BY_SERIES",
+        },
+        { status: 400 }
+      );
+    }
+  }
 
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: "无有效字段" }, { status: 400 });

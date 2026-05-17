@@ -1,6 +1,6 @@
 # Creator MMFC
 
-**版本：1.8.0**
+**版本：1.9.0**
 
 面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，可选 **GCS** 做对象存储。
 
@@ -53,8 +53,99 @@
 
 - 仪表盘、用户 / 项目 / 视频任务 / 画布项目管理
 - Prompt 模板管理：版本历史、回滚、Schema 测试、按 provider 适配
-- 凭据池管理：CRUD、连通性探测、主用凭据、用途/模型粒度适用范围
+- 凭据池管理：CRUD、连通性探测、主用凭据、用途/模型粒度适用范围、**按 (渠道, 模型) 独立并发上限**
 - 默认模型管理、模型注册表、用户行为日志、审计日志、Token 统计
+- **v1.9.0：Series 管理（5 Tab 详情：概览 / 成员 / 预算 / 集数 / 日志）+ Series 创建表单 + 预算调整**
+
+### v1.9.0 新增：Series 项目空间
+
+- 用户端 `/series` 路由层级，三角色 RBAC（OWNER 导演 / PRODUCER 制作者 / VIEWER 只读）
+- 按 Series 设定 Seedance token 预算池 + Canvas 成功调用次数硬上限
+- OWNER buffer 调配（buffer ↔ 集数双向）、集数锁定 / 解锁
+- 新建画布弹窗可绑定 Series；画布生图调用从 Series 预算池扣减
+- 画布快照乐观锁互踢提示、画布文字节点拖拽缩放
+
+---
+
+### 版本 1.9.0 更新摘要
+
+**主要特性：Series（系列）+ 资源预算池 + 数据保护增强**
+
+#### 1. 业务体系：Series / Episode / 三角色
+
+- 不重命名旧 Project；新增 `Series`（产品语义"项目"），把 `Project` 重定义为"集数（Episode）"
+- 三角色 RBAC：OWNER（导演）/ PRODUCER（制作者）/ VIEWER（只读）；后端每次请求实时查 `ProjectMember`，不缓存
+- 新模型：`Series`、`ProjectMember`、`SeriesResourceBudget`、`ProjectResourceAllocation`、`BudgetEvent`
+- 字段扩展：`Project.seriesId / episodeNumber / episodeTitle / lockedReason`、`CanvasProject.seriesId`、`User.canSelfCreateProject`
+- 兼容：legacy Project（`seriesId = null`）保留作者自建路径，不进入预算池
+
+#### 2. 资源预算池
+
+- **Seedance**：按 token 预扣 → 提交 → 释放，事务 + `idempotencyKey` 防重；估算公式集成 `minimumTokenLimits` 强制下限
+- **Canvas**：成功调用次数硬上限——`committedUsage` 达 `totalBudget` 立即 429，允许 in-flight 任务跑完
+- OWNER buffer 调配：buffer ↔ 集数双向，全程写 `BudgetEvent` 审计
+- 新增 lib：`series-budget.ts` / `seedance-pricing.ts` / `series-membership.ts` / `workspace-guards.ts`
+
+#### 3. Admin 后台
+
+- `/series` 列表 + 创建表单（基础信息 / 集数 / 成员 / Seedance 预算 / Canvas 预算 / buffer 比例，单事务提交）
+- `/series/:id` 五 Tab 详情：概览 / 成员 / 预算 / 集数 / 日志（BudgetEvent 分页）
+- 系列默认风格 / 画幅 / 分辨率 / seed 全局配置（强制集数提交沿用）
+
+#### 4. 用户工作台
+
+- `/series` 路由层级 + nav 入口；`/dashboard` 标题改为"我的旧项目"保留 legacy Project
+- `/projects/new` 受 `User.canSelfCreateProject` + `GlobalConfig.allow_user_self_create_project` 双层权限门控
+- 客户端组件：`SeriesBudgetCard`（buffer 调配 Dialog）、`SeriesOwnerActions`（锁/解锁 Dialog）、`SeriesCanvasLauncher`、`SeriesSettingsCard`
+
+#### 5. Canvas 集成
+
+- 新建画布弹窗支持选 Series（拉 `/api/workspace/series` 列表，过滤掉 VIEWER 角色）
+- `CanvasProject.seriesId` 落库；生图调用从 Series 全局 Canvas 预算池扣减（`committedUsage += 1`）
+- **文字节点拖拽缩放**：右下角手柄，宽 / 高存 `node.data`、感知 canvas zoom 因子、随快照持久化
+
+#### 6. 数据保护（P0 安全增强）
+
+- **快照乐观锁**：`CanvasProject` 新增 `version` 字段；客户端 autosave 提交带 `baseVersion`，服务端 `FOR UPDATE` 比对，stale → `409 STALE_BASE_VERSION`
+- **异常缩量拦截**：新快照 nodes < 旧 nodes × 50% → `409 SNAPSHOT_SHRINK_DETECTED`（客户端可显式 `confirmShrink: true` 覆盖）
+- **快照历史**：`CanvasSnapshotHistory` 保留最近 30 版本，覆写前自动入库；按 `createdAt desc` 截断
+- **单会话强制**：`User.activeSessionId`；登录生成新 sid 写入 DB；旧 tab 下次请求 sid 不一致即被踢
+- **客户端冲突感知**：`MMFC-canvas` autosave 失败立即停写、模态框引导刷新；指数退避（300ms / 900ms）应对 5xx
+
+#### 7. 并发与限流优化
+
+- `ProviderCredential` 新增 `concurrencyByModel JSON`：按 (渠道, 模型) 独立设并发上限（兼容旧字段 `concurrency` 作 fallback）
+- Worker 双层并发：(user, model) + (credential, model)，避免单一模型把渠道打满
+- 默认 `globalLimit` 提升到 200（仅作安全上限，真正的限流由 (cred, model) 层把关）
+- Admin 凭据编辑表单新增"按模型并发"动态行（Key=modelKey, Value=并发数）
+
+#### 8. 用户体验
+
+- 分镜 seed 字段加"🎲 随机" / "🧹 清空"按钮；Series 上下文锁定提示
+- Series 项目锁定风格 / 画幅 / 分辨率 / seed（集数面板不再渲染这些字段，由 Series 默认值统一注入）
+- 集数显示修复（不再"第 2 集·第 2 集"重复标题）
+- Canvas 文字节点头部"复制 / 删除"按钮保留，新增右下角拖拽角；hover 时手柄高亮
+
+#### 9. Bug 修复
+
+- `/api/videos/[taskId]`：原本只校验 `project.userId === session.user.id`，Series 成员 404；改用 `assertEpisodeAccess(.., 'read')`，OWNER / PRODUCER / VIEWER 均可读
+- `db-init` 容器与 `admin-api` 共享镜像（`docker-compose.yml` 加 `image: creator_mmfc-admin-api:latest`），避免 schema drift 导致字段被 `prisma db push --accept-data-loss` 丢弃
+- 系列分镜 PATCH / DELETE / clone 路径鉴权统一走 `assertEpisodeAccess`
+
+#### 10. 数据库迁移
+
+- `web/prisma/migrations/20260514000000_v1_9_0_series_budget/`：Series 全套表 + 字段扩展
+- `web/prisma/migrations/20260516000000_v1_9_1_series_defaults/`：Series 默认 style / ratio / resolution / seed + activeSessionId + version + snapshot history
+- `admin/prisma/migrations/20260514000000_v1_9_0_series_budget/`：admin schema 镜像同步
+
+迁移 SQL 附加：把现有用户 `canSelfCreateProject` 回填 `true`；写入 `GlobalConfig.allow_user_self_create_project = 'false'` 全局开关。
+
+#### 11. 升级注意
+
+- 现有用户保留自建 Project 权限（migration SQL 把 `canSelfCreateProject = true`）
+- 新注册用户默认 `false`，需 Admin 把用户加入 Series 才能生产
+- 旧 CanvasProject `seriesId = null` 走 legacy 配额，不进入预算池
+- 单会话强制启用后：旧浏览器 tab 在新设备登录后会被踢，属于预期行为
 
 ---
 
@@ -519,7 +610,7 @@ docker compose up -d --build
 5. `MMFC-canvas/src/views/Canvas.vue` 仍有项目复制 / 删除相关 `TODO`，说明画布项目操作闭环还不完整，建议补齐并加端到端验证。
 6. 根仓库仍有 `tmp/`、`.claude/` 等本地工作痕迹未纳入忽略规则；本次未自动入库，但建议后续明确 `.gitignore` 策略，避免日志和草稿误提交。
 
-### 升级已有部署（任意旧版本 → 1.7.0）
+### 升级已有部署（任意旧版本 → 1.9.0）
 
 1. 拉取最新代码
 2. 在 `.env` / `.env.docker` 中补充 SMTP 配置（注册 / 忘记密码功能必须）：
@@ -544,6 +635,9 @@ docker compose up -d --build
    - `20260510001000_canvas_ai_call_cost`（1.5.2：CanvasAiCall.costEstimate）
    - `20260512000000_canvas_image_channel_rotation`（1.6.0：渠道并发上限、冷却字段、任务渠道绑定）
    - `20260512100000_email_verification`（1.7.0：EmailVerificationCode 表 + User.emailVerified）
+   - `20260513000000_baseline_init` / `20260513000001_admin_permissions_and_soft_delete`（1.8.0：admin 权限矩阵）
+   - `20260514000000_v1_9_0_series_budget`（1.9.0：Series / ProjectMember / 资源预算池 / BudgetEvent / 字段扩展）
+   - `20260516000000_v1_9_1_series_defaults`（1.9.0：Series 默认风格 / 画幅 / 分辨率 / seed、User.activeSessionId、CanvasProject.version、ProviderCredential.concurrencyByModel、CanvasSnapshotHistory）
 3. 执行 seed 补充初始数据（首次升级需要）：
    ```bash
    cd admin && npx ts-node prisma/seed.ts

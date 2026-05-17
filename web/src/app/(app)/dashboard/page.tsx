@@ -22,28 +22,50 @@ const statusLabels: Record<string, string> = {
 
 export default async function DashboardPage() {
   const session = await auth();
+  // v1.9.0：dashboard 只展示 legacy 自建 Project（seriesId=null）；归属 Series 的进入 /series。
   const projects = await prisma.project.findMany({
-    where: { userId: session!.user.id },
+    where: { userId: session!.user.id, seriesId: null },
     orderBy: { createdAt: "desc" },
     include: { _count: { select: { storyboards: true } } },
   });
+  const [user, gc] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: session!.user.id },
+      select: { canSelfCreateProject: true },
+    }),
+    prisma.globalConfig.findUnique({ where: { key: "allow_user_self_create_project" } }),
+  ]);
+  const canSelfCreate = !!(user?.canSelfCreateProject || gc?.value === "true");
 
   return (
     <div>
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">我的项目</h1>
-        <Link href="/projects/new">
-          <Button>新建项目</Button>
-        </Link>
+        <div>
+          <h1 className="text-2xl font-bold">我的旧项目</h1>
+          <p className="text-sm text-muted-foreground">
+            归属于 Series 项目集的集数请到 <Link href="/series" className="underline">我的项目</Link> 查看。
+          </p>
+        </div>
+        {canSelfCreate && (
+          <Link href="/projects/new">
+            <Button>新建项目</Button>
+          </Link>
+        )}
       </div>
 
       {projects.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <p className="mb-4 text-muted-foreground">还没有项目</p>
-            <Link href="/projects/new">
-              <Button>创建第一个项目</Button>
-            </Link>
+            <p className="mb-4 text-muted-foreground">这里没有 legacy 项目</p>
+            {canSelfCreate ? (
+              <Link href="/projects/new">
+                <Button>创建第一个项目</Button>
+              </Link>
+            ) : (
+              <Link href="/series">
+                <Button variant="outline">前往 Series 项目</Button>
+              </Link>
+            )}
           </CardContent>
         </Card>
       ) : (

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { assertEpisodeAccess, SeriesAccessError } from "@/lib/series-membership";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -24,14 +25,24 @@ export async function GET(
       storyboard: {
         select: {
           storyboardId: true,
-          project: { select: { userId: true } },
+          projectId: true,
         },
       },
     },
   });
 
-  if (!task || task.storyboard.project.userId !== session.user.id) {
+  if (!task) {
     return NextResponse.json({ error: "不存在" }, { status: 404 });
+  }
+
+  // v1.9.0: legacy 项目验作者；Series 项目验成员（OWNER/PRODUCER/VIEWER 均可读）
+  try {
+    await assertEpisodeAccess(session.user.id, task.storyboard.projectId, "read");
+  } catch (err) {
+    if (err instanceof SeriesAccessError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
   }
 
   const downloadName = `${task.storyboard.storyboardId}_${task.arkTaskId}.mp4`;

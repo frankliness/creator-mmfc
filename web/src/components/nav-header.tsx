@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
+  { href: "/series", label: "我的项目" },
   { href: "/dashboard", label: "工作台" },
   { href: "/ai-canvas", label: "AI 画布" },
 ];

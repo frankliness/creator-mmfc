@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { authError, requireCanvasUser } from "@/lib/canvas/canvas-auth";
 import { logUserAction } from "@/lib/user-action-logger";
+import { getMembership } from "@/lib/series-membership";
 
 const patchSchema = z.object({
   name: z.string().min(1).max(120).optional(),
@@ -11,12 +12,28 @@ const patchSchema = z.object({
     .object({ x: z.number(), y: z.number(), zoom: z.number() })
     .optional(),
   status: z.enum(["ACTIVE", "ARCHIVED"]).optional(),
+  /** v1.9.0：可改 seriesId（限 OWNER 或 legacy 自建者） */
+  seriesId: z.string().nullable().optional(),
 });
 
-async function loadOwned(id: string, userId: string) {
-  return prisma.canvasProject.findFirst({
-    where: { id, userId, status: { not: "DELETED" } },
+/**
+ * v1.9.0：兼容三种归属
+ * - legacy：userId 是当前用户
+ * - Series：当前用户是该 Series ACTIVE 成员
+ */
+async function loadAccessible(id: string, userId: string) {
+  const cp = await prisma.canvasProject.findFirst({
+    where: { id, status: { not: "DELETED" } },
   });
+  if (!cp) return null;
+  if (cp.userId === userId) return cp;
+  if (cp.seriesId) {
+    const m = await prisma.projectMember.findUnique({
+      where: { seriesId_userId: { seriesId: cp.seriesId, userId } },
+    });
+    if (m && m.status === "ACTIVE") return cp;
+  }
+  return null;
 }
 
 export async function GET(
@@ -27,9 +44,16 @@ export async function GET(
   if (!auth.ok) return authError(auth);
 
   const { id } = await params;
-  const project = await loadOwned(id, auth.user.id);
+  const project = await loadAccessible(id, auth.user.id);
   if (!project) {
     return NextResponse.json({ error: "项目不存在" }, { status: 404 });
+  }
+
+  // Determine edit permission
+  let canEdit = true;
+  if (project.seriesId && project.userId !== auth.user.id) {
+    const m = await getMembership(auth.user.id, project.seriesId);
+    canEdit = !!m && m.role !== "VIEWER";
   }
 
   const [nodes, edges] = await Promise.all([
@@ -43,6 +67,10 @@ export async function GET(
     thumbnail: project.thumbnail,
     viewport: project.viewport,
     status: project.status,
+    seriesId: project.seriesId,
+    canEdit,
+    // v1.9.1: 客户端必须基于此 version 提交快照，否则会被服务端 409 拒绝
+    version: project.version,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     nodes,
@@ -58,9 +86,17 @@ export async function PATCH(
   if (!auth.ok) return authError(auth);
 
   const { id } = await params;
-  const existing = await loadOwned(id, auth.user.id);
+  const existing = await loadAccessible(id, auth.user.id);
   if (!existing) {
     return NextResponse.json({ error: "项目不存在" }, { status: 404 });
+  }
+
+  // Block VIEWER from any writes
+  if (existing.seriesId && existing.userId !== auth.user.id) {
+    const m = await getMembership(auth.user.id, existing.seriesId);
+    if (!m || m.role === "VIEWER") {
+      return NextResponse.json({ error: "VIEWER 不可修改画布" }, { status: 403 });
+    }
   }
 
   const body = await req.json().catch(() => ({}));
@@ -79,6 +115,27 @@ export async function PATCH(
     return NextResponse.json({ error: "无有效字段" }, { status: 400 });
   }
 
+  // v1.9.0：seriesId 重绑只允许（旧 Series 的 OWNER + 新 Series 的 OWNER/PRODUCER） 或 legacy 自建者解绑自己
+  if ("seriesId" in data) {
+    const newSeriesId = data.seriesId as string | null;
+    // 旧 series 检查
+    if (existing.seriesId) {
+      const oldM = await getMembership(auth.user.id, existing.seriesId);
+      if (!oldM || oldM.role !== "OWNER") {
+        return NextResponse.json({ error: "需要原 Series 的 OWNER 才能改归属" }, { status: 403 });
+      }
+    } else if (existing.userId !== auth.user.id) {
+      return NextResponse.json({ error: "无权修改归属" }, { status: 403 });
+    }
+    // 新 series 检查
+    if (newSeriesId) {
+      const newM = await getMembership(auth.user.id, newSeriesId);
+      if (!newM || newM.role === "VIEWER") {
+        return NextResponse.json({ error: "需要新 Series 的 OWNER/PRODUCER" }, { status: 403 });
+      }
+    }
+  }
+
   const updated = await prisma.canvasProject.update({
     where: { id },
     data,
@@ -88,6 +145,7 @@ export async function PATCH(
       thumbnail: true,
       viewport: true,
       status: true,
+      seriesId: true,
       updatedAt: true,
     },
   });
@@ -116,7 +174,7 @@ export async function DELETE(
   if (!auth.ok) return authError(auth);
 
   const { id } = await params;
-  const existing = await loadOwned(id, auth.user.id);
+  const existing = await loadAccessible(id, auth.user.id);
   if (!existing) {
     return NextResponse.json({ error: "项目不存在" }, { status: 404 });
   }

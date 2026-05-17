@@ -28,6 +28,7 @@ services:
   # 删除/重建表并提示 --accept-data-loss：优先 `docker compose build --no-cache db-init` 再 up；
   # 仅开发库可在根 .env 设 PRISMA_ACCEPT_DATA_LOSS=1（会按 Prisma 提示丢弃冲突表数据，勿用于生产）。
   db-init:
+    image: creator_mmfc-admin-api:latest
     build:
       context: .
       dockerfile: admin/server/Dockerfile

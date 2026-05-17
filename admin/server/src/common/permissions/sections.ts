@@ -16,6 +16,8 @@ export const ADMIN_SECTION_KEYS = [
   "defaults",
   "modelRegistry",
   "globalConfig",
+  // v1.9.0：Series（项目）管理。
+  "series",
 ] as const;
 
 export type SectionKey = (typeof ADMIN_SECTION_KEYS)[number];
@@ -38,6 +40,7 @@ export const DEFAULT_ADMIN_PERMISSIONS: PermissionMatrix = {
   tokenUsage: { read: true, write: false },
   userActionLogs: { read: true, write: false },
   auditLogs: { read: true, write: false },
+  series: { read: true, write: true },
 };
 
 export const DEFAULT_OPERATOR_PERMISSIONS: PermissionMatrix = {
@@ -51,6 +54,7 @@ export const DEFAULT_OPERATOR_PERMISSIONS: PermissionMatrix = {
   tokenUsage: { read: true, write: false },
   userActionLogs: { read: true, write: false },
   auditLogs: { read: true, write: false },
+  series: { read: true, write: false },
 };
 
 // 规范化：write=true 必须 read=true；read=false 必须 write=false

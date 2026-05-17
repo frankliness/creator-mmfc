@@ -10,6 +10,11 @@ import { logTokenUsage } from "../lib/token-logger";
 import { decrypt } from "../lib/crypto";
 import { logUserAction } from "../lib/user-action-logger";
 import { pollCanvasImageTasks, reclaimZombies } from "./pollCanvasImageTasks";
+import {
+  commitTokenUsage,
+  releaseTokenUsage,
+  findBudgetById,
+} from "../lib/series-budget";
 
 const prisma = new PrismaClient();
 
@@ -33,7 +38,7 @@ async function pollTasks() {
         select: {
           id: true,
           storyboardId: true,
-          project: { select: { id: true, userId: true } },
+          project: { select: { id: true, userId: true, seriesId: true } },
         },
       },
     },
@@ -99,7 +104,52 @@ async function pollTasks() {
           },
         });
 
-        if (result.usage) {
+        // v1.9.0：Series 预算对账（成功路径）
+        if (task.storyboard.project.seriesId) {
+          try {
+            const reservedLog = await prisma.tokenUsageLog.findUnique({
+              where: { idempotencyKey: `seedance:${task.arkTaskId}` },
+            });
+            if (reservedLog && reservedLog.status === "RESERVED" && reservedLog.seriesBudgetId) {
+              const budget = await findBudgetById(prisma, reservedLog.seriesBudgetId);
+              if (budget) {
+                const actual = BigInt(result.usage?.total_tokens || 0);
+                const allocation = await prisma.projectResourceAllocation.findUnique({
+                  where: {
+                    seriesBudgetId_projectId: {
+                      seriesBudgetId: budget.id,
+                      projectId: task.storyboard.project.id,
+                    },
+                  },
+                });
+                await prisma.$transaction(async (tx) => {
+                  await commitTokenUsage(tx, budget, reservedLog.reservedAmount, actual, {
+                    operatorId: task.storyboard.project.userId,
+                    operatorRole: "SYSTEM",
+                    projectId: task.storyboard.project.id,
+                    projectAllocationId: allocation?.id ?? null,
+                    reason: "Worker Seedance commit",
+                    metadata: { arkTaskId: task.arkTaskId },
+                  });
+                  await tx.tokenUsageLog.update({
+                    where: { id: reservedLog.id },
+                    data: {
+                      status: "FINALIZED",
+                      actualTokens: actual,
+                      committedAmount: actual,
+                      totalTokens: actual,
+                      outputTokens: BigInt(result.usage?.completion_tokens || 0),
+                      finalizedAt: new Date(),
+                    },
+                  });
+                });
+              }
+            }
+          } catch (budgetErr) {
+            console.error("[worker] Series budget commit failed:", budgetErr);
+          }
+        } else if (result.usage) {
+          // legacy 路径保持原有 logTokenUsage 行为
           await logTokenUsage({
             userId: task.storyboard.project.userId,
             projectId: task.storyboard.project.id,
@@ -153,6 +203,43 @@ async function pollTasks() {
             error: errorMsg,
           },
         });
+
+        // v1.9.0：失败释放预扣
+        if (task.storyboard.project.seriesId) {
+          try {
+            const reservedLog = await prisma.tokenUsageLog.findUnique({
+              where: { idempotencyKey: `seedance:${task.arkTaskId}` },
+            });
+            if (reservedLog && reservedLog.status === "RESERVED" && reservedLog.seriesBudgetId) {
+              const budget = await findBudgetById(prisma, reservedLog.seriesBudgetId);
+              if (budget) {
+                const allocation = await prisma.projectResourceAllocation.findUnique({
+                  where: {
+                    seriesBudgetId_projectId: {
+                      seriesBudgetId: budget.id,
+                      projectId: task.storyboard.project.id,
+                    },
+                  },
+                });
+                await prisma.$transaction(async (tx) => {
+                  await releaseTokenUsage(tx, budget, reservedLog.reservedAmount, {
+                    operatorId: task.storyboard.project.userId,
+                    operatorRole: "SYSTEM",
+                    projectId: task.storyboard.project.id,
+                    projectAllocationId: allocation?.id ?? null,
+                    reason: "Worker Seedance failed release",
+                  });
+                  await tx.tokenUsageLog.update({
+                    where: { id: reservedLog.id },
+                    data: { status: "RELEASED", finalizedAt: new Date() },
+                  });
+                });
+              }
+            }
+          } catch (budgetErr) {
+            console.error("[worker] Series budget release failed:", budgetErr);
+          }
+        }
 
         await prisma.storyboard.update({
           where: { id: task.storyboardId },

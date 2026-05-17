@@ -4,7 +4,23 @@ import { prisma } from "@/lib/prisma";
 import { isValidManualStoryboardDuration } from "@/lib/storyboard-duration";
 import { MAX_STORYBOARD_SEED } from "@/lib/storyboard-seed";
 import { logUserAction } from "@/lib/user-action-logger";
+import { getMembership } from "@/lib/series-membership";
 import { z } from "zod";
+
+async function canWriteStoryboard(
+  userId: string,
+  project: { userId: string; seriesId: string | null; lockedReason: string | null },
+) {
+  if (project.lockedReason) return { ok: false as const, reason: "locked" as const };
+  if (project.userId === userId) return { ok: true as const };
+  if (project.seriesId) {
+    const m = await getMembership(userId, project.seriesId);
+    if (m && (m.role === "OWNER" || m.role === "PRODUCER")) {
+      return { ok: true as const };
+    }
+  }
+  return { ok: false as const, reason: "forbidden" as const };
+}
 
 const updateSchema = z.object({
   prompt: z.string().optional(),
@@ -36,11 +52,18 @@ export async function PATCH(
 
   const storyboard = await prisma.storyboard.findUnique({
     where: { id },
-    include: { project: { select: { userId: true } } },
+    include: { project: { select: { userId: true, seriesId: true, lockedReason: true } } },
   });
 
-  if (!storyboard || storyboard.project.userId !== session.user.id) {
+  if (!storyboard) {
     return NextResponse.json({ error: "分镜不存在" }, { status: 404 });
+  }
+  const access = await canWriteStoryboard(session.user.id, storyboard.project);
+  if (!access.ok) {
+    if (access.reason === "locked") {
+      return NextResponse.json({ error: "集数已锁定" }, { status: 423 });
+    }
+    return NextResponse.json({ error: "无权操作该分镜" }, { status: 403 });
   }
 
   const body = await req.json();
@@ -94,13 +117,20 @@ export async function DELETE(
   const storyboard = await prisma.storyboard.findUnique({
     where: { id },
     include: {
-      project: { select: { userId: true } },
+      project: { select: { userId: true, seriesId: true, lockedReason: true } },
       _count: { select: { tasks: true } },
     },
   });
 
-  if (!storyboard || storyboard.project.userId !== session.user.id) {
+  if (!storyboard) {
     return NextResponse.json({ error: "分镜不存在" }, { status: 404 });
+  }
+  const access = await canWriteStoryboard(session.user.id, storyboard.project);
+  if (!access.ok) {
+    if (access.reason === "locked") {
+      return NextResponse.json({ error: "集数已锁定" }, { status: 423 });
+    }
+    return NextResponse.json({ error: "无权操作该分镜" }, { status: 403 });
   }
 
   if (storyboard.status !== "DRAFT" || storyboard._count.tasks > 0) {

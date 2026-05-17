@@ -16,6 +16,8 @@ export const ADMIN_SECTION_KEYS = [
   "defaults",
   "modelRegistry",
   "globalConfig",
+  // v1.9.0：Series（项目）管理
+  "series",
 ] as const;
 
 export type SectionKey = (typeof ADMIN_SECTION_KEYS)[number];
@@ -66,6 +68,16 @@ export const ADMIN_SECTIONS: SectionMeta[] = [
     description: "查看项目列表、项目详情",
     writeDescription: "删除项目",
     hasWrite: true,
+  },
+  {
+    key: "series",
+    label: "Series（项目集）",
+    group: "main",
+    routePath: "/series",
+    description: "查看 Series 列表、成员、预算、集数、日志",
+    writeDescription: "新增 Series、配置预算、分配成员、调整 buffer",
+    hasWrite: true,
+    highRiskWrite: true,
   },
   {
     key: "canvasProjects",

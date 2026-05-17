@@ -12,7 +12,14 @@
         <template v-if="column.key === 'status'">
           <a-tag :color="taskStatusColor(record.status)">{{ record.status }}</a-tag>
         </template>
-        <template v-if="column.key === 'user'">{{ record.storyboard?.project?.user?.email }}</template>
+        <template v-if="column.key === 'user'">
+          <span v-if="record.storyboard?.project?.user as any">
+            {{ (record.storyboard.project.user as any).name
+              ? `${(record.storyboard.project.user as any).name} (${(record.storyboard.project.user as any).email})`
+              : (record.storyboard.project.user as any).email }}
+          </span>
+          <span v-else style="color: #999">—</span>
+        </template>
         <template v-if="column.key === 'project'">{{ record.storyboard?.project?.name }}</template>
         <template v-if="column.key === 'action'">
           <a-space>

@@ -11,6 +11,7 @@ const summaryQuerySchema = z.object({
   userId: z.string().optional(),
   userEmail: z.string().optional(),
   projectId: z.string().optional(),
+  seriesId: z.string().optional(),
   provider: z.string().optional(),
   model: z.string().optional(),
   from: z.string().optional(),
@@ -294,6 +295,113 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
     reply.header("Content-Type", "text/csv; charset=utf-8");
     reply.header("Content-Disposition", "attachment; filename=token-usage-by-user.csv");
     return `\uFEFF${csvHeader}${csvRows}`;
+  });
+
+  /** 以 Project（集数）为维度 */
+  app.get("/by-project", async (request) => {
+    const query = summaryQuerySchema.parse(request.query);
+    const { fromDate, toDate } = resolveTimeRange(query);
+
+    const rows = await prisma.$queryRaw<
+      { projectId: string; projectName: string | null; userEmail: string; userName: string | null; seriesName: string | null; total: bigint; count: bigint }[]
+    >(Prisma.sql`
+      SELECT t."projectId",
+             p."name" AS "projectName",
+             u."email" AS "userEmail",
+             u."name" AS "userName",
+             s."name" AS "seriesName",
+             SUM(t."totalTokens") AS total,
+             COUNT(*)::bigint AS count
+      FROM "TokenUsageLog" t
+      LEFT JOIN "Project" p ON p."id" = t."projectId"
+      LEFT JOIN "User" u ON u."id" = t."userId"
+      LEFT JOIN "Series" s ON s."id" = p."seriesId"
+      WHERE t."createdAt" >= ${fromDate}
+        AND t."createdAt" < ${toDate}
+        AND t."projectId" IS NOT NULL
+        ${query.projectId ? Prisma.sql`AND t."projectId" = ${query.projectId}` : Prisma.empty}
+        ${buildUserEmailFilter(query, "u")}
+      GROUP BY t."projectId", p."name", u."email", u."name", s."name"
+      ORDER BY total DESC
+      LIMIT 100
+    `);
+    return rows;
+  });
+
+  /** 以 Series 为维度（汇总） */
+  app.get("/by-series", async (request) => {
+    const query = summaryQuerySchema.parse(request.query);
+    const { fromDate, toDate } = resolveTimeRange(query);
+
+    const rows = await prisma.$queryRaw<
+      { seriesId: string | null; seriesName: string | null; total: bigint; count: bigint; userCount: bigint; episodeCount: bigint }[]
+    >(Prisma.sql`
+      SELECT t."seriesId",
+             s."name" AS "seriesName",
+             SUM(t."totalTokens") AS total,
+             COUNT(*)::bigint AS count,
+             COUNT(DISTINCT t."userId")::bigint AS "userCount",
+             COUNT(DISTINCT t."projectId")::bigint AS "episodeCount"
+      FROM "TokenUsageLog" t
+      LEFT JOIN "Series" s ON s."id" = t."seriesId"
+      WHERE t."createdAt" >= ${fromDate}
+        AND t."createdAt" < ${toDate}
+        AND t."seriesId" IS NOT NULL
+        ${query.seriesId ? Prisma.sql`AND t."seriesId" = ${query.seriesId}` : Prisma.empty}
+      GROUP BY t."seriesId", s."name"
+      ORDER BY total DESC
+      LIMIT 100
+    `);
+    return rows;
+  });
+
+  /**
+   * 以 Series 为维度 — 细化到 (集数 × 用户) 的明细
+   * 用于 admin 点击某个 series 后查看：哪个集数被哪些用户消耗了多少 token
+   */
+  app.get("/by-series-breakdown", async (request) => {
+    const query = summaryQuerySchema.parse(request.query);
+    const { fromDate, toDate } = resolveTimeRange(query);
+
+    const rows = await prisma.$queryRaw<
+      {
+        seriesId: string;
+        seriesName: string | null;
+        projectId: string | null;
+        episodeNumber: number | null;
+        episodeName: string | null;
+        userId: string;
+        userEmail: string;
+        userName: string | null;
+        provider: string;
+        total: bigint;
+        count: bigint;
+      }[]
+    >(Prisma.sql`
+      SELECT t."seriesId",
+             s."name" AS "seriesName",
+             t."projectId",
+             p."episodeNumber" AS "episodeNumber",
+             COALESCE(p."episodeTitle", p."name") AS "episodeName",
+             t."userId",
+             u."email" AS "userEmail",
+             u."name" AS "userName",
+             t."provider",
+             SUM(t."totalTokens") AS total,
+             COUNT(*)::bigint AS count
+      FROM "TokenUsageLog" t
+      LEFT JOIN "Series" s ON s."id" = t."seriesId"
+      LEFT JOIN "Project" p ON p."id" = t."projectId"
+      LEFT JOIN "User" u ON u."id" = t."userId"
+      WHERE t."createdAt" >= ${fromDate}
+        AND t."createdAt" < ${toDate}
+        AND t."seriesId" IS NOT NULL
+        ${query.seriesId ? Prisma.sql`AND t."seriesId" = ${query.seriesId}` : Prisma.empty}
+      GROUP BY t."seriesId", s."name", t."projectId", p."episodeNumber", p."episodeTitle", p."name", t."userId", u."email", u."name", t."provider"
+      ORDER BY t."seriesId", p."episodeNumber" NULLS LAST, total DESC
+      LIMIT 500
+    `);
+    return rows;
   });
 
   app.get("/canvas/by-user", async (request) => {

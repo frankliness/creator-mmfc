@@ -47,6 +47,7 @@ interface ProjectShape {
   resolution: string;
   assetsJson: unknown;
   assetDescriptions: unknown;
+  seriesId?: string | null;
 }
 
 interface AssetRow {
@@ -63,6 +64,8 @@ interface Props {
 
 export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" }: Props) {
   const isManual = creationMode === "MANUAL";
+  // v1.9.1: Series 项目的风格/画幅/分辨率由 Series 全局设置控制，集数内不可改
+  const lockSeriesFields = !!project.seriesId;
   const [name, setName] = useState(project.name);
   const [style, setStyle] = useState(project.style);
   const [ratio, setRatio] = useState(project.ratio);
@@ -116,19 +119,23 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
     }
 
     setSavingProject(true);
+    // Series 项目不在此处提交 style/ratio/resolution/name（由 Series 全局设置管控）
+    const payload: Record<string, unknown> = {
+      script,
+      fullScript,
+      assetsJson,
+      assetDescriptions,
+    };
+    if (!lockSeriesFields) {
+      payload.name = name;
+      payload.style = style;
+      payload.ratio = ratio;
+      payload.resolution = resolution;
+    }
     const res = await fetch(`/api/projects/${project.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name,
-        style,
-        ratio,
-        resolution,
-        script,
-        fullScript,
-        assetsJson,
-        assetDescriptions,
-      }),
+      body: JSON.stringify(payload),
     });
     setSavingProject(false);
     if (!res.ok) {
@@ -211,18 +218,26 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2 sm:col-span-2">
-              <Label>项目名称</Label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
+            {!lockSeriesFields && (
+              <div className="space-y-2 sm:col-span-2">
+                <Label>项目名称</Label>
+                <Input value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+            )}
             <div className="space-y-2">
-              <Label>美术风格</Label>
-              <Input value={style} onChange={(e) => setStyle(e.target.value)} />
+              <Label>
+                美术风格
+                {lockSeriesFields && <span className="ml-2 text-xs text-muted-foreground">（Series 全局，仅导演可改）</span>}
+              </Label>
+              <Input value={style} onChange={(e) => setStyle(e.target.value)} disabled={lockSeriesFields} />
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-2">
-                <Label>画幅</Label>
-                <Select value={ratio} onValueChange={(v) => v && setRatio(v)}>
+                <Label>
+                  画幅
+                  {lockSeriesFields && <span className="ml-2 text-xs text-muted-foreground">（Series 全局）</span>}
+                </Label>
+                <Select value={ratio} onValueChange={(v) => v && setRatio(v)} disabled={lockSeriesFields}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -237,8 +252,11 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>分辨率</Label>
-                <Select value={resolution} onValueChange={(v) => v && setResolution(v)}>
+                <Label>
+                  分辨率
+                  {lockSeriesFields && <span className="ml-2 text-xs text-muted-foreground">（Series 全局）</span>}
+                </Label>
+                <Select value={resolution} onValueChange={(v) => v && setResolution(v)} disabled={lockSeriesFields}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -290,11 +308,9 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
             <Button onClick={saveProject} disabled={savingProject}>
               {savingProject ? "保存中…" : "保存项目信息"}
             </Button>
-            {isManual && (
-              <Button variant="secondary" onClick={openAddStoryboard}>
-                添加分镜（自动编号）
-              </Button>
-            )}
+            <Button variant="secondary" onClick={openAddStoryboard}>
+              添加分镜（自动编号）
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -337,13 +353,36 @@ export function ManualProjectPanel({ project, onUpdate, creationMode = "MANUAL" 
             </div>
             <div className="space-y-2">
               <Label>Seed（可选）</Label>
-              <Input
-                value={newSeed}
-                onChange={(e) => setNewSeed(e.target.value)}
-                inputMode="numeric"
-                placeholder="留空则使用项目 seed"
-                className="w-56"
-              />
+              <div className="flex items-center gap-2">
+                <Input
+                  value={newSeed}
+                  onChange={(e) => setNewSeed(e.target.value)}
+                  inputMode="numeric"
+                  placeholder={lockSeriesFields ? "留空则使用 Series 默认 seed" : "留空则使用项目 seed"}
+                  className="w-56"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setNewSeed(String(Math.floor(Math.random() * MAX_STORYBOARD_SEED) + 1))}
+                >
+                  随机
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setNewSeed("")}
+                >
+                  清空
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {lockSeriesFields
+                  ? "Series 默认 seed = 0 时，每次提交会自动生成新随机数；非 0 时全 Series 统一使用该值。"
+                  : "留空时，提交会使用项目级 seed；项目级 seed 为 0 则自动随机。"}
+              </p>
             </div>
             <Separator />
             <div className="flex items-center justify-between">

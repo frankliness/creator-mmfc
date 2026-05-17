@@ -5,6 +5,7 @@ import { generateStoryboards } from "@/lib/gemini";
 import { logTokenUsage } from "@/lib/token-logger";
 import { estimateCostUSD } from "@/lib/llm/capabilities";
 import { logUserAction } from "@/lib/user-action-logger";
+import { getMembership } from "@/lib/series-membership";
 
 export const maxDuration = 120;
 
@@ -19,12 +20,23 @@ export async function POST(
 
   const { id } = await params;
 
-  const project = await prisma.project.findFirst({
-    where: { id, userId: session.user.id },
+  const project = await prisma.project.findUnique({
+    where: { id },
   });
 
   if (!project) {
     return NextResponse.json({ error: "项目不存在" }, { status: 404 });
+  }
+
+  // v1.9.0：支持 series 成员（OWNER/PRODUCER）
+  if (project.userId !== session.user.id) {
+    if (!project.seriesId) {
+      return NextResponse.json({ error: "无权限" }, { status: 403 });
+    }
+    const m = await getMembership(session.user.id, project.seriesId);
+    if (!m) return NextResponse.json({ error: "无权限" }, { status: 403 });
+    if (m.role === "VIEWER") return NextResponse.json({ error: "VIEWER 不可生成分镜" }, { status: 403 });
+    if (project.lockedReason) return NextResponse.json({ error: `项目已锁定：${project.lockedReason}` }, { status: 423 });
   }
 
   if (project.creationMode === "MANUAL") {

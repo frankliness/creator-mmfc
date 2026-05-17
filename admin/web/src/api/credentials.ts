@@ -17,8 +17,10 @@ export interface Credential {
   isPrimary: boolean;
   sortOrder: number;
   remark: string | null;
-  /** v1.5.0: 该渠道画布生图并发上限 */
+  /** v1.5.0: 该渠道默认画布生图并发上限（modelKey 未列入 concurrencyByModel 时使用） */
   concurrency: number;
+  /** v1.9.1: 按模型独立并发上限 */
+  concurrencyByModel: Record<string, number> | null;
   /** v1.5.0: 限流冷却到期时间；过期或 null 表示可用 */
   cooldownUntil: string | null;
   createdAt: string;
@@ -39,6 +41,7 @@ export interface CredentialInput {
   sortOrder?: number;
   remark?: string | null;
   concurrency?: number;
+  concurrencyByModel?: Record<string, number> | null;
 }
 
 export interface ProbeResult {

@@ -43,6 +43,12 @@
       </template>
     </AppHeader>
 
+    <!-- Read-only banner | 只读模式提示 -->
+    <div v-if="!canEditProject" class="bg-amber-50 border-b border-amber-200 px-4 py-1.5 text-sm text-amber-700 flex items-center gap-2">
+      <span>👁</span>
+      <span>只读模式 — 你是 VIEWER，无法修改此画布</span>
+    </div>
+
     <!-- Main canvas area | 主画布区域 -->
     <div class="flex-1 relative overflow-hidden">
       <!-- Vue Flow canvas | Vue Flow 画布 -->
@@ -56,8 +62,11 @@
         :default-viewport="canvasViewport"
         :min-zoom="0.1"
         :max-zoom="2"
-        :snap-to-grid="true"
+        :snap-to-grid="canEditProject"
         :snap-grid="[20, 20]"
+        :nodes-draggable="canEditProject"
+        :nodes-connectable="canEditProject"
+        :elements-selectable="canEditProject"
         @connect="onConnect"
         @node-click="onNodeClick"
         @pane-click="onPaneClick"
@@ -74,8 +83,8 @@
         />
       </VueFlow>
 
-      <!-- Left toolbar | 左侧工具栏 -->
-      <aside class="absolute left-4 top-1/2 -translate-y-1/2 flex flex-col gap-1 p-2 bg-[var(--bg-secondary)] rounded-xl border border-[var(--border-color)] shadow-lg z-10">
+      <!-- Left toolbar | 左侧工具栏 (hidden in read-only) -->
+      <aside v-if="canEditProject" class="absolute left-4 top-1/2 -translate-y-1/2 flex flex-col gap-1 p-2 bg-[var(--bg-secondary)] rounded-xl border border-[var(--border-color)] shadow-lg z-10">
         <button 
           @click="showNodeMenu = !showNodeMenu"
           class="w-10 h-10 flex items-center justify-center rounded-xl bg-[var(--accent-color)] text-white hover:bg-[var(--accent-hover)] transition-colors"
@@ -103,9 +112,9 @@
         </button>
       </aside>
 
-      <!-- Node menu popup | 节点菜单弹窗 -->
-      <div 
-        v-if="showNodeMenu"
+      <!-- Node menu popup | 节点菜单弹窗 (hidden in read-only) -->
+      <div
+        v-if="showNodeMenu && canEditProject"
         class="absolute left-20 top-1/2 -translate-y-1/2 bg-[var(--bg-secondary)] rounded-xl border border-[var(--border-color)] shadow-lg p-2 z-20"
       >
         <button 
@@ -147,8 +156,8 @@
         </div>
       </div>
 
-      <!-- Bottom input panel (floating) | 底部输入面板（悬浮） -->
-      <div class="absolute bottom-4 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-20">
+      <!-- Bottom input panel (floating) | 底部输入面板（悬浮，只读时隐藏） -->
+      <div v-if="canEditProject" class="absolute bottom-4 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-20">
         <!-- Processing indicator | 处理中指示器 -->
         <div 
           v-if="isProcessing" 
@@ -163,13 +172,19 @@
           </div>
         </div>
 
-        <div class="bg-[var(--bg-primary)] rounded-xl border border-[var(--border-color)] p-3">
+        <div class="relative bg-[var(--bg-primary)] rounded-xl border border-[var(--border-color)] p-3">
+          <!-- v1.9.1: 拖拽 resize 把手 -->
+          <div
+            class="absolute -top-1 left-1/2 -translate-x-1/2 h-2 w-12 rounded-full bg-[var(--border-color)] hover:bg-[var(--accent-color)] cursor-ns-resize transition-colors"
+            title="拖拽调整输入框高度"
+            @mousedown="startResizeChat"
+          />
           <textarea
             v-model="chatInput"
             :placeholder="inputPlaceholder"
             :disabled="isProcessing"
-            class="w-full bg-transparent resize-none outline-none text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] min-h-[40px] max-h-[120px] disabled:opacity-50"
-            rows="1"
+            :style="{ height: chatHeight + 'px' }"
+            class="w-full bg-transparent resize-none outline-none text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] disabled:opacity-50"
             @keydown.enter.exact="handleEnterKey"
             @keydown.enter.ctrl="sendMessage"
           />
@@ -243,6 +258,23 @@
     <!-- Download Modal | 下载弹窗 -->
     <DownloadModal v-model:show="showDownloadModal" />
 
+    <!-- v1.9.1: 保存冲突模态框 -->
+    <n-modal v-model:show="showConflictModal" preset="dialog" title="保存冲突" type="warning" :closable="false" :mask-closable="false">
+      <div class="space-y-2 text-sm">
+        <p>{{ conflictDetail?.message || '本次保存被服务端拒绝。' }}</p>
+        <p v-if="conflictDetail?.code" class="text-xs text-[var(--text-secondary)]">错误码：{{ conflictDetail.code }}</p>
+        <p v-if="conflictDetail?.server" class="text-xs text-[var(--text-secondary)]">
+          服务端当前版本：v{{ conflictDetail.server.currentVersion }}，{{ conflictDetail.server.nodeCount }} nodes / {{ conflictDetail.server.edgeCount }} edges
+        </p>
+        <p class="text-amber-600">
+          自动保存已停止。请刷新页面加载服务端最新版本后再编辑。
+        </p>
+      </div>
+      <template #action>
+        <n-button type="primary" @click="reloadAfterConflict">刷新页面</n-button>
+      </template>
+    </n-modal>
+
     <!-- Workflow Panel | 工作流面板 -->
     <WorkflowPanel v-model:show="showWorkflowPanel" @add-workflow="handleAddWorkflow" />
   </div>
@@ -284,7 +316,7 @@ import { nodes, edges, addNode, addNodes, addEdge, addEdges, updateNode, initSam
 import { loadAllModels } from '../stores/models'
 import { useChat, useWorkflowOrchestrator } from '../hooks'
 import { useModelStore } from '../stores/pinia'
-import { projects, initProjectsStore, updateProject, renameProject, currentProject } from '../stores/projects'
+import { projects, initProjectsStore, updateProject, renameProject, currentProject, canEditProject, conflictedProjectIds } from '../stores/projects'
 import { DEFAULT_CHAT_MODEL } from '../config/models'
 
 // API Settings component | API 设置组件
@@ -387,6 +419,55 @@ const isMobile = ref(false)
 const showGrid = ref(true)
 const showApiSettings = ref(false)
 const isProcessing = ref(false)
+
+// v1.9.1：保存冲突模态框
+const showConflictModal = ref(false)
+const conflictDetail = ref(null)
+function onSaveConflict (e) {
+  conflictDetail.value = e?.detail || null
+  showConflictModal.value = true
+}
+function reloadAfterConflict () {
+  // 用户确认刷新，丢弃本地未保存修改加载最新版本
+  if (typeof window !== 'undefined') window.location.reload()
+}
+onMounted(() => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('canvas:save-conflict', onSaveConflict)
+  }
+})
+onUnmounted(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('canvas:save-conflict', onSaveConflict)
+  }
+})
+
+// v1.9.1：底部输入框可拖拽 resize（向上拖加高）
+const CHAT_MIN_HEIGHT = 40
+const CHAT_HEIGHT_LS_KEY = 'mmfc-canvas-chat-height'
+const chatHeight = ref(CHAT_MIN_HEIGHT)
+try {
+  const saved = parseInt(localStorage.getItem(CHAT_HEIGHT_LS_KEY) || '', 10)
+  if (Number.isFinite(saved) && saved >= CHAT_MIN_HEIGHT) chatHeight.value = saved
+} catch (_e) { /* ignore */ }
+
+function startResizeChat (e) {
+  e.preventDefault()
+  const startY = e.clientY
+  const startH = chatHeight.value
+  const onMove = (ev) => {
+    // 向上拖拽 = 高度增加
+    const next = Math.max(CHAT_MIN_HEIGHT, startH + (startY - ev.clientY))
+    chatHeight.value = next
+  }
+  const onUp = () => {
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    try { localStorage.setItem(CHAT_HEIGHT_LS_KEY, String(chatHeight.value)) } catch (_e) { /* ignore */ }
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
 
 // Flow key for forcing re-render on project switch | 项目切换时强制重新渲染的 key
 const flowKey = ref(Date.now())

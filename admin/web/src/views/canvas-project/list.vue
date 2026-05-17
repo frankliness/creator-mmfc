@@ -29,7 +29,12 @@
       @change="handleTableChange"
     >
       <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'user'">{{ record.user?.email }}</template>
+        <template v-if="column.key === 'user'">
+          <span v-if="record.user">
+            {{ record.user.name ? `${record.user.name} (${record.user.email})` : record.user.email }}
+          </span>
+          <span v-else style="color: #999">—</span>
+        </template>
         <template v-if="column.key === 'status'">
           <a-tag :color="statusColor(record.status)">{{ record.status }}</a-tag>
         </template>

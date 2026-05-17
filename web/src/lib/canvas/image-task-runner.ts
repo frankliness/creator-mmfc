@@ -23,6 +23,14 @@ import { resolveImageByModel, resolveImageEditByModel } from "@/lib/llm/credenti
 import { classifyError } from "@/lib/llm/error-classify";
 import { saveCanvasImage, readCanvasAsset } from "@/lib/canvas/canvas-storage";
 import { logCanvasCall } from "@/lib/canvas/canvas-logger";
+import {
+  findBudget,
+  commitSuccessCount,
+  BUDGET_SCOPE_CANVAS_IMAGE,
+  CANVAS_GLOBAL_PROVIDER,
+  CANVAS_GLOBAL_MODEL_KEY,
+  METRIC_SUCCESS_COUNT,
+} from "@/lib/series-budget";
 import { logUserAction } from "@/lib/user-action-logger";
 import { estimateImageCost } from "@/lib/canvas/cost-table";
 import { getCanvasImageTaskTimeoutMs } from "@/lib/canvas/concurrency-config";
@@ -246,6 +254,61 @@ export async function runImageTask(taskId: string): Promise<{
         error: null,
       },
     });
+
+    // v1.9.0：Series Canvas 预算 committedUsage += 1（仅成功路径）
+    try {
+      const canvasProject = await prisma.canvasProject.findUnique({
+        where: { id: task.projectId },
+        select: { seriesId: true },
+      });
+      if (canvasProject?.seriesId) {
+        const budget = await findBudget(prisma, {
+          seriesId: canvasProject.seriesId,
+          provider: CANVAS_GLOBAL_PROVIDER,
+          modelKey: CANVAS_GLOBAL_MODEL_KEY,
+          budgetScope: BUDGET_SCOPE_CANVAS_IMAGE,
+          metricType: METRIC_SUCCESS_COUNT,
+        });
+        if (budget && budget.status === "ACTIVE") {
+          const idemKey = `canvas:${task.id}`;
+          // 幂等：若已写过 FINALIZED 记录则跳过
+          const exists = await prisma.tokenUsageLog.findUnique({ where: { idempotencyKey: idemKey } });
+          if (!exists) {
+            await prisma.$transaction(async (tx) => {
+              await commitSuccessCount(tx, budget, {
+                operatorId: task.userId,
+                operatorRole: "SYSTEM",
+                projectId: null,
+                reason: "Worker Canvas success",
+                metadata: { canvasImageTaskId: task.id, actualCallType: task.callType },
+              });
+              await tx.tokenUsageLog.create({
+                data: {
+                  userId: task.userId,
+                  provider: imageConfig.provider,
+                  model: task.model,
+                  requestType: task.callType,
+                  seriesId: canvasProject.seriesId!,
+                  seriesBudgetId: budget.id,
+                  canvasProjectId: task.projectId,
+                  canvasImageTaskId: task.id,
+                  metricType: METRIC_SUCCESS_COUNT,
+                  budgetScope: BUDGET_SCOPE_CANVAS_IMAGE,
+                  actualCallType: task.callType,
+                  committedAmount: BigInt(1),
+                  status: "FINALIZED",
+                  finalizedAt: new Date(),
+                  idempotencyKey: idemKey,
+                  metadata: { saved: saved.length, durationMs, upstreamProvider: imageConfig.provider },
+                },
+              });
+            });
+          }
+        }
+      }
+    } catch (budgetErr) {
+      console.error("[image-task] Series canvas budget commit failed:", budgetErr);
+    }
 
     // Step 7: 审计日志
     await logCanvasCall({

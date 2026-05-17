@@ -5,6 +5,7 @@ import { nextSequentialStoryboardId } from "@/lib/storyboard-id";
 import { isValidManualStoryboardDuration } from "@/lib/storyboard-duration";
 import { MAX_STORYBOARD_SEED } from "@/lib/storyboard-seed";
 import { logUserAction } from "@/lib/user-action-logger";
+import { getMembership } from "@/lib/series-membership";
 import { z } from "zod";
 
 const createBodySchema = z.object({
@@ -39,19 +40,26 @@ export async function POST(
 
   const { id: projectId } = await params;
 
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, userId: session.user.id },
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
 
   if (!project) {
     return NextResponse.json({ error: "项目不存在" }, { status: 404 });
   }
 
-  if (project.creationMode !== "MANUAL") {
-    return NextResponse.json(
-      { error: "仅手动分镜项目可手动添加分镜" },
-      { status: 400 }
-    );
+  if (project.lockedReason) {
+    return NextResponse.json({ error: "集数已锁定" }, { status: 423 });
+  }
+  // Check access: owner OR series OWNER/PRODUCER
+  if (project.userId !== session.user.id) {
+    if (!project.seriesId) {
+      return NextResponse.json({ error: "无权限" }, { status: 403 });
+    }
+    const m = await getMembership(session.user.id, project.seriesId);
+    if (!m || (m.role !== "OWNER" && m.role !== "PRODUCER")) {
+      return NextResponse.json({ error: "无权限" }, { status: 403 });
+    }
   }
 
   const body = await req.json();

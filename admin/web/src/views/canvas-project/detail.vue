@@ -1,6 +1,6 @@
 <template>
   <div v-if="row">
-    <a-page-header :title="row.name" :sub-title="`用户 ${row.user?.email}`" @back="$router.back()">
+    <a-page-header :title="row.name" :sub-title="row.user ? (row.user.name ? `${row.user.name} (${row.user.email})` : row.user.email) : ''" @back="$router.back()">
       <template #extra>
         <a-tag :color="statusColor(row.status)">{{ row.status }}</a-tag>
       </template>
@@ -8,7 +8,7 @@
 
     <a-descriptions bordered :column="2" style="margin-bottom: 16px">
       <a-descriptions-item label="ID">{{ row.id }}</a-descriptions-item>
-      <a-descriptions-item label="用户">{{ row.user?.name }} ({{ row.user?.email }})</a-descriptions-item>
+      <a-descriptions-item label="用户">{{ row.user ? (row.user.name ? `${row.user.name} (${row.user.email})` : row.user.email) : '—' }}</a-descriptions-item>
       <a-descriptions-item label="节点数">{{ row._count?.nodes ?? 0 }}</a-descriptions-item>
       <a-descriptions-item label="边数">{{ row._count?.edges ?? 0 }}</a-descriptions-item>
       <a-descriptions-item label="资产数">{{ row._count?.assets ?? 0 }}</a-descriptions-item>

@@ -23,6 +23,10 @@ model User {
   remark         String?         @db.Text
   /** 邮箱验证完成时间。null = 尚未通过邮箱验证。 */
   emailVerified  DateTime?
+  /** v1.9.0: 是否允许自建 Project（旧用户保留 true；新用户默认 false） */
+  canSelfCreateProject Boolean   @default(false)
+  /** v1.9.1: 当前有效 Web 端 session id。新登录会改写此值，旧 token 失效（单设备登录）。 */
+  activeSessionId String?
   projects         Project[]
   apiConfigs       UserApiConfig[]
   tokenUsages      TokenUsageLog[]
@@ -80,10 +84,17 @@ model Project {
   creationMode      ProjectCreationMode @default(AUTO)
   status            ProjectStatus       @default(DRAFT)
   storyboards       Storyboard[]
+  // v1.9.0: Series / Episode extensions
+  seriesId          String?
+  episodeNumber     Int?
+  episodeTitle      String?
+  assigneeId        String?
+  lockedReason      String?             @db.Text
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
 
   @@index([userId])
+  @@index([seriesId])
 }
 
 enum ProjectCreationMode {
@@ -239,8 +250,10 @@ model ProviderCredential {
   isPrimary      Boolean         @default(false)
   sortOrder      Int             @default(100)
   remark         String?
-  /** v1.5.0: 每渠道画布生图并发上限（worker 轮询使用） */
+  /** v1.5.0: 每渠道默认画布生图并发上限（modelKey 未列入 concurrencyByModel 时使用） */
   concurrency    Int             @default(6)
+  /** v1.9.1: 按模型独立并发上限，形如 { "seedream-4-0": 4, "gpt-image-1": 10 } */
+  concurrencyByModel Json?
   /** v1.5.0: 命中限流后的冷却到期时间；null 或已过期则参与调度 */
   cooldownUntil  DateTime?
   userApiConfigs UserApiConfig[]
@@ -287,25 +300,47 @@ model GlobalConfig {
 }
 
 model TokenUsageLog {
-  id           String   @id @default(uuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id])
-  projectId    String?
-  taskId       String?
-  provider     String
-  model        String
-  requestType  String
-  inputTokens  BigInt   @default(0)
-  outputTokens BigInt   @default(0)
-  totalTokens  BigInt   @default(0)
-  costEstimate Decimal? @db.Decimal(10, 6)
-  metadata     Json?
-  createdAt    DateTime @default(now())
+  id                String    @id @default(uuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id])
+  projectId         String?
+  taskId            String?
+  provider          String
+  model             String
+  requestType       String
+  inputTokens       BigInt    @default(0)
+  outputTokens      BigInt    @default(0)
+  totalTokens       BigInt    @default(0)
+  costEstimate      Decimal?  @db.Decimal(10, 6)
+  metadata          Json?
+  // v1.9.0: Resource budget tracking
+  seriesId          String?
+  seriesBudgetId    String?
+  storyboardId      String?
+  generationTaskId  String?
+  canvasProjectId   String?
+  canvasImageTaskId String?
+  metricType        String?
+  budgetScope       String?
+  actualCallType    String?
+  estimateTokens    BigInt    @default(0)
+  actualTokens      BigInt    @default(0)
+  reservedAmount    BigInt    @default(0)
+  committedAmount   BigInt    @default(0)
+  status            String    @default("FINALIZED")
+  idempotencyKey    String?   @unique
+  finalizedAt       DateTime?
+  createdAt         DateTime  @default(now())
 
   @@index([userId])
   @@index([userId, provider])
   @@index([createdAt])
   @@index([userId, createdAt])
+  @@index([seriesId, createdAt])
+  @@index([seriesBudgetId])
+  @@index([status])
+  @@index([generationTaskId])
+  @@index([canvasImageTaskId])
 }
 
 model UserActionLog {
@@ -400,16 +435,43 @@ model CanvasProject {
   thumbnail  String?           @db.Text
   viewport   Json              @default("{\"x\":100,\"y\":50,\"zoom\":0.8}")
   status     CanvasStatus      @default(ACTIVE)
+  /** v1.9.0: 归属的 Series（项目）。null = legacy 个人画布 */
+  seriesId   String?
+  /** v1.9.1: 乐观锁版本号 */
+  version    Int               @default(1)
   nodes      CanvasNode[]
   edges      CanvasEdge[]
   assets     CanvasAsset[]
   aiCalls    CanvasAiCall[]
   imageTasks CanvasImageTask[]
+  history    CanvasSnapshotHistory[]
   createdAt  DateTime          @default(now())
   updatedAt  DateTime          @updatedAt
 
   @@index([userId])
   @@index([userId, updatedAt])
+  @@index([seriesId])
+}
+
+/// v1.9.1：画布快照历史
+model CanvasSnapshotHistory {
+  id         String        @id @default(uuid())
+  projectId  String
+  project    CanvasProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  version    Int
+  nodesJson  Json
+  edgesJson  Json
+  viewportJson Json
+  nodeCount  Int
+  edgeCount  Int
+  userId     String?
+  userAgent  String?       @db.Text
+  ipAddress  String?
+  clientId   String?
+  createdAt  DateTime      @default(now())
+
+  @@index([projectId, createdAt])
+  @@index([projectId, version])
 }
 
 enum CanvasStatus {
@@ -536,4 +598,139 @@ model CanvasImageTask {
   @@index([projectId, status, createdAt])
   @@index([status, createdAt])
   @@index([credentialId, finishedAt])
+}
+
+// ──────────────────────────────────────────────
+// v1.9.0: Series / 项目成员 / 资源预算
+// ──────────────────────────────────────────────
+
+/// v1.9.0：项目（产品语义）。承载多集数（Project / Episode）、成员、资源预算。
+model Series {
+  id          String   @id @default(uuid())
+  name        String
+  description String?  @db.Text
+  /** Series Owner / 导演 userId */
+  ownerId     String?
+  /** ACTIVE / LOCKED / OVER_BUDGET / ARCHIVED */
+  status      String   @default("ACTIVE")
+  /** v1.9.1：Series 全局默认设置（仅导演可改），集数创建/更新时下发到 Project */
+  defaultStyle      String @default("")
+  defaultRatio      String @default("9:16")
+  defaultResolution String @default("720p")
+  /** 0 = 每个集数生成时使用随机 seed；非 0 = 全 Series 统一 seed（不推荐） */
+  defaultSeed       Int    @default(0)
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([ownerId])
+  @@index([status])
+}
+
+/// v1.9.0：项目组成员（Series 层级）。
+model ProjectMember {
+  id        String   @id @default(uuid())
+  seriesId  String
+  userId    String
+  /** OWNER / PRODUCER / VIEWER */
+  role      String   @default("PRODUCER")
+  /** ACTIVE / REMOVED */
+  status    String   @default("ACTIVE")
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([seriesId, userId])
+  @@index([userId])
+  @@index([seriesId])
+  @@index([userId, status])
+}
+
+/// v1.9.0：集数级权限 override（仅建表，业务暂不接入）。
+model ProjectMemberEpisodeOverride {
+  id         String   @id @default(uuid())
+  seriesId   String
+  projectId  String
+  userId     String
+  /** READ_ONLY / DENY / EDIT */
+  permission String
+  grantedBy  String?
+  reason     String?  @db.Text
+  createdAt  DateTime @default(now())
+
+  @@unique([projectId, userId, permission])
+  @@index([seriesId, userId])
+  @@index([projectId])
+}
+
+/// v1.9.0：Series 资源预算池。按 provider+modelKey+budgetScope+metricType 唯一。
+model SeriesResourceBudget {
+  id                String   @id @default(uuid())
+  seriesId          String
+  provider          String
+  modelKey          String
+  /** 预算口径：video_generation / canvas_image_generation 等 */
+  budgetScope       String
+  /** TOKEN / SUCCESS_COUNT */
+  metricType        String
+  totalBudget       BigInt   @default(0)
+  committedUsage    BigInt   @default(0)
+  reservedUsage     BigInt   @default(0)
+  unallocatedBudget BigInt   @default(0)
+  isHardCap         Boolean  @default(true)
+  /** ACTIVE / EXHAUSTED / LOCKED / OVERRUN / ARCHIVED */
+  status            String   @default("ACTIVE")
+  createdBy         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([seriesId, provider, modelKey, budgetScope, metricType])
+  @@index([seriesId])
+  @@index([seriesId, budgetScope, modelKey])
+  @@index([status])
+}
+
+/// v1.9.0：Series 预算 → 集数（Project）的分配。
+model ProjectResourceAllocation {
+  id              String   @id @default(uuid())
+  seriesBudgetId  String
+  seriesId        String
+  projectId       String
+  allocatedBudget BigInt   @default(0)
+  committedUsage  BigInt   @default(0)
+  reservedUsage   BigInt   @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([seriesBudgetId, projectId])
+  @@index([seriesId, projectId])
+  @@index([projectId])
+}
+
+/// v1.9.0：预算变更事件流水。所有 budget 写动作都必须落一条。
+model BudgetEvent {
+  id                String   @id @default(uuid())
+  seriesId          String
+  seriesBudgetId    String?
+  projectId         String?
+  /** SERIES_BUDGET_CREATE / SERIES_BUDGET_INCREASE / SERIES_BUDGET_DECREASE / BUFFER_ALLOCATE / BUFFER_RELEASE / PROJECT_ALLOCATE / PROJECT_DEDUCT / OWNER_ADJUST / ADMIN_ADJUST / USAGE_RESERVE / USAGE_COMMIT / USAGE_RELEASE / USAGE_OVERRUN */
+  type              String
+  metricType        String?
+  amount            BigInt
+  beforeBudget      BigInt?
+  afterBudget       BigInt?
+  beforeUnallocated BigInt?
+  afterUnallocated  BigInt?
+  /** Admin 操作时为 AdminUser.id，Owner/Producer 时为 User.id */
+  operatorId        String?
+  /** ADMIN / OWNER / PRODUCER / SYSTEM */
+  operatorRole      String?
+  reason            String?  @db.Text
+  metadata          Json?
+  createdAt         DateTime @default(now())
+
+  @@index([seriesId, createdAt])
+  @@index([seriesBudgetId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([type, createdAt])
 }

@@ -14,6 +14,47 @@ export const projects = ref([])
 // 当前项目 ID | Current project ID
 export const currentProjectId = ref(null)
 
+// 当前项目是否可编辑（VIEWER 为 false）| Whether current project is editable
+export const canEditProject = ref(true)
+
+// v1.9.1: 客户端 id（用于审计与冲突日志，localStorage 持久化）
+const CLIENT_ID_KEY = 'mmfc-canvas-client-id'
+function ensureClientId () {
+  try {
+    let id = localStorage.getItem(CLIENT_ID_KEY)
+    if (!id) {
+      id = `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+      localStorage.setItem(CLIENT_ID_KEY, id)
+    }
+    return id
+  } catch (_e) {
+    return 'c-fallback'
+  }
+}
+export const clientId = ensureClientId()
+
+// v1.9.1: 各项目的 baseVersion（由 fetchProjectDetail 返回，autosave 时回传）
+// 如果发生冲突，置为 null 表示禁用 autosave 直到刷新
+const projectVersions = new Map()
+export const conflictedProjectIds = ref(new Set())
+export const isProjectConflicted = (id) => conflictedProjectIds.value.has(id)
+function markProjectConflict (id, detail) {
+  if (!id) return
+  if (!conflictedProjectIds.value.has(id)) {
+    conflictedProjectIds.value = new Set([...conflictedProjectIds.value, id])
+  }
+  // 通知 UI 弹模态框
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('canvas:save-conflict', { detail: { projectId: id, ...detail } }))
+  }
+}
+function clearProjectConflict (id) {
+  if (!id || !conflictedProjectIds.value.has(id)) return
+  const next = new Set(conflictedProjectIds.value)
+  next.delete(id)
+  conflictedProjectIds.value = next
+}
+
 // 当前项目（来自列表的 meta） | Current project (meta only)
 export const currentProject = computed(() => {
   return projects.value.find(p => p.id === currentProjectId.value) || null
@@ -97,6 +138,13 @@ export const fetchProjectDetail = async (id) => {
     canvasDataCache.set(id, canvasData)
     hydratedProjectIds.add(id)
     upsertProjectInList(normalizeProject(detail))
+    // Update global canEdit flag
+    canEditProject.value = detail.canEdit !== false
+    // v1.9.1: 记录基准版本，autosave 时回传
+    if (typeof detail.version === 'number') {
+      projectVersions.set(id, detail.version)
+      clearProjectConflict(id)
+    }
     return canvasData
   } catch (err) {
     console.error('[projects] fetchProjectDetail failed:', err)
@@ -110,12 +158,15 @@ export const fetchProjectDetail = async (id) => {
  * 创建项目
  * @returns {Promise<string|null>} 新项目 ID
  */
-export const createProject = async (name = '未命名项目') => {
+export const createProject = async (arg = '未命名项目') => {
+  const isObj = arg && typeof arg === 'object'
+  const name = isObj ? (arg.name || '未命名项目') : (arg || '未命名项目')
+  const seriesId = isObj ? (arg.seriesId || null) : null
   try {
     const created = await request({
       url: '/projects',
       method: 'post',
-      data: { name }
+      data: seriesId ? { name, seriesId } : { name }
     })
     const normalized = normalizeProject(created)
     projects.value = [normalized, ...projects.value]
@@ -134,9 +185,11 @@ export const createProject = async (name = '未命名项目') => {
 
 /**
  * 更新项目 meta（name/thumbnail/viewport/status）
+ * VIEWER 角色（canEditProject=false）跳过
  */
 export const updateProject = async (id, data = {}) => {
   if (!id) return false
+  if (!canEditProject.value) return false  // VIEWER 跳过
   // 仅允许后端 patch 的字段
   const allow = ['name', 'thumbnail', 'viewport', 'status']
   const payload = {}
@@ -165,30 +218,87 @@ const SNAPSHOT_DEBOUNCE_MS = 800
 const snapshotTimers = new Map()
 const pendingPayloads = new Map()
 
+const SNAPSHOT_RETRY_DELAYS_MS = [300, 900]
+
+const isTransientError = (err) => {
+  // 无 response = 网络中断 / fetch failed；5xx = 服务端瞬时故障
+  if (!err?.response) return true
+  const status = err.response.status
+  return status >= 500 && status < 600
+}
+
 const flushSnapshot = async (id) => {
   const payload = pendingPayloads.get(id)
   if (!payload) return
   pendingPayloads.delete(id)
-  try {
-    await request({
-      url: `/projects/${id}/snapshot`,
-      method: 'put',
-      data: payload
-    })
-  } catch (err) {
-    const data = err?.response?.data
-    if (err?.response?.status === 409 && data?.error === 'empty_snapshot_requires_confirm') {
-      return
-    }
-    console.error('[projects] snapshot save failed:', err)
+
+  // v1.9.1: 已冲突的项目，禁止 autosave 继续覆盖
+  if (conflictedProjectIds.value.has(id)) {
+    console.warn('[projects] snapshot save skipped, project in conflict state')
+    return
   }
+
+  // v1.9.1: 附加 baseVersion + clientId 给后端做乐观锁/审计
+  const baseVersion = projectVersions.get(id)
+  const sendPayload = {
+    ...payload,
+    ...(typeof baseVersion === 'number' ? { baseVersion } : {}),
+    clientId
+  }
+
+  let lastErr = null
+  for (let attempt = 0; attempt <= SNAPSHOT_RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const resp = await request({
+        url: `/projects/${id}/snapshot`,
+        method: 'put',
+        data: sendPayload
+      })
+      // 成功：更新本地版本号供下次 autosave 使用
+      const newVersion = resp?.data?.version ?? resp?.version
+      if (typeof newVersion === 'number') {
+        projectVersions.set(id, newVersion)
+      }
+      clearProjectConflict(id)
+      return
+    } catch (err) {
+      lastErr = err
+      const status = err?.response?.status
+      const data = err?.response?.data
+      if (status === 409) {
+        if (data?.error === 'empty_snapshot_requires_confirm') return
+        // STALE_BASE_VERSION / SNAPSHOT_SHRINK_DETECTED：标记冲突，停止 autosave
+        markProjectConflict(id, {
+          code: data?.code || 'UNKNOWN_CONFLICT',
+          error: data?.error,
+          message: data?.message,
+          server: data?.server || null
+        })
+        console.warn('[projects] snapshot conflict, autosave halted:', data?.code || data?.error)
+        return
+      }
+      if (status && status >= 400 && status < 500) {
+        console.error('[projects] snapshot save failed (client error):', err)
+        return
+      }
+      if (!isTransientError(err) || attempt >= SNAPSHOT_RETRY_DELAYS_MS.length) break
+      const delay = SNAPSHOT_RETRY_DELAYS_MS[attempt]
+      console.warn(`[projects] snapshot save transient error, retry ${attempt + 1} in ${delay}ms`, err?.message || err)
+      await new Promise((r) => setTimeout(r, delay))
+    }
+  }
+  console.error('[projects] snapshot save failed after retries:', lastErr)
 }
 
 /**
  * 更新项目画布数据（节点 + 边 + viewport），debounce 同步到后端
+ * VIEWER 角色（canEditProject=false）直接跳过，避免触发 403 保存错误
  */
 export const updateProjectCanvas = async (id, canvasData = {}) => {
   if (!id) return false
+  if (!canEditProject.value) return false  // VIEWER 跳过
+  // v1.9.1: 已发生冲突的项目，autosave 暂停直到用户刷新解决
+  if (conflictedProjectIds.value.has(id)) return false
 
   const cached = canvasDataCache.get(id)
   const fallback = { nodes: [], edges: [], viewport: DEFAULT_VIEWPORT }

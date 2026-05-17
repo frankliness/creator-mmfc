@@ -6,7 +6,12 @@
         <template v-if="column.key === 'status'">
           <a-tag :color="statusColor(record.status)">{{ record.status }}</a-tag>
         </template>
-        <template v-if="column.key === 'user'">{{ record.user?.email }}</template>
+        <template v-if="column.key === 'user'">
+          <span v-if="record.user">
+            {{ record.user.name ? `${record.user.name} (${record.user.email})` : record.user.email }}
+          </span>
+          <span v-else style="color: #999">—</span>
+        </template>
         <template v-if="column.key === 'tokenTotal'">{{ Number(record.tokenSummary?.totalTokens || 0).toLocaleString() }}</template>
         <template v-if="column.key === 'tokenModels'">
           <a-popover v-if="record.tokenSummary?.byModel?.length" title="模型拆分" trigger="click">

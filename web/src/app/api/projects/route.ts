@@ -42,8 +42,19 @@ export async function GET() {
     return NextResponse.json({ error: "未登录" }, { status: 401 });
   }
 
+  // v1.9.0：返回 legacy 自建 Project（seriesId=null && userId=self） ∪ 已加入 Series 的全部集数
+  const memberships = await prisma.projectMember.findMany({
+    where: { userId: session.user.id, status: "ACTIVE" },
+    select: { seriesId: true },
+  });
+  const seriesIds = memberships.map((m) => m.seriesId);
   const projects = await prisma.project.findMany({
-    where: { userId: session.user.id },
+    where: {
+      OR: [
+        { userId: session.user.id, seriesId: null },
+        ...(seriesIds.length ? [{ seriesId: { in: seriesIds } }] : []),
+      ],
+    },
     orderBy: { createdAt: "desc" },
     include: { _count: { select: { storyboards: true } } },
   });
@@ -55,6 +66,22 @@ export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "未登录" }, { status: 401 });
+  }
+
+  // v1.9.0：自建 Project 鉴权（用户级标志 OR 全局开关）
+  const [user, gc] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { canSelfCreateProject: true },
+    }),
+    prisma.globalConfig.findUnique({ where: { key: "allow_user_self_create_project" } }),
+  ]);
+  const allowed = user?.canSelfCreateProject || gc?.value === "true";
+  if (!allowed) {
+    return NextResponse.json(
+      { error: "你没有自建项目权限，请联系管理员将你加入项目组", code: "SELF_CREATE_FORBIDDEN" },
+      { status: 403 },
+    );
   }
 
   try {

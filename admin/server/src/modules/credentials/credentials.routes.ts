@@ -49,8 +49,13 @@ const createSchema = z.object({
   isPrimary: z.boolean().default(false),
   sortOrder: z.number().int().default(100),
   remark: z.string().optional().nullable(),
-  /** v1.5.0: 每渠道画布生图并发上限（worker 渠道轮询使用） */
+  /** v1.5.0: 每渠道画布生图默认并发上限（worker 渠道轮询使用） */
   concurrency: z.number().int().min(1).max(200).default(6),
+  /** v1.9.1: 按模型独立并发上限，形如 { "seedream-4-0": 4, "gpt-image-1": 10 } */
+  concurrencyByModel: z
+    .record(z.string().min(1), z.number().int().min(1).max(200))
+    .optional()
+    .nullable(),
 });
 
 const updateSchema = createSchema
@@ -205,6 +210,7 @@ function toApi(cred: {
   sortOrder: number;
   remark: string | null;
   concurrency: number;
+  concurrencyByModel: unknown;
   cooldownUntil: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -227,6 +233,7 @@ function toApi(cred: {
     sortOrder: cred.sortOrder,
     remark: cred.remark,
     concurrency: cred.concurrency,
+    concurrencyByModel: cred.concurrencyByModel ?? null,
     cooldownUntil: cred.cooldownUntil,
     createdAt: cred.createdAt,
     updatedAt: cred.updatedAt,
@@ -286,6 +293,7 @@ export async function credentialsRoutes(app: FastifyInstance) {
         sortOrder: data.sortOrder,
         remark: data.remark ?? null,
         concurrency: data.concurrency,
+        concurrencyByModel: data.concurrencyByModel ?? undefined,
       },
     });
 
@@ -335,6 +343,9 @@ export async function credentialsRoutes(app: FastifyInstance) {
     if (d.sortOrder !== undefined) data.sortOrder = d.sortOrder;
     if (d.remark !== undefined) data.remark = d.remark;
     if (d.concurrency !== undefined) data.concurrency = d.concurrency;
+    if (d.concurrencyByModel !== undefined) {
+      data.concurrencyByModel = d.concurrencyByModel ?? null;
+    }
 
     const nextProvider = (d.provider ?? existing.provider) as ProviderType;
     const nextPurposes = (d.purposes ?? credentialPurposes(existing.purposes)) as Purpose[];

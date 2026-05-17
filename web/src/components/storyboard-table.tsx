@@ -91,6 +91,9 @@ interface Props {
   storyboards: Storyboard[];
   projectStatus: string;
   onUpdate: () => void;
+  readOnly?: boolean;
+  /** v1.9.1：是否为 Series 集数，影响 seed 占位提示文案 */
+  inSeries?: boolean;
 }
 
 const storyboardStatusLabels: Record<string, string> = {
@@ -132,7 +135,7 @@ function formatTime(iso: string) {
   });
 }
 
-export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
+export function StoryboardTable({ projectId, storyboards, onUpdate, readOnly = false, inSeries = false }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editPrompt, setEditPrompt] = useState("");
@@ -400,14 +403,16 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3">
-        <Button
-          onClick={submitBatch}
-          disabled={selected.size === 0 || batchSubmitting}
-        >
-          {batchSubmitting
-            ? "提交中..."
-            : `批量提交 (${selected.size})`}
-        </Button>
+        {!readOnly && (
+          <Button
+            onClick={submitBatch}
+            disabled={selected.size === 0 || batchSubmitting}
+          >
+            {batchSubmitting
+              ? "提交中..."
+              : `批量提交 (${selected.size})`}
+          </Button>
+        )}
         <Button
           variant="outline"
           onClick={downloadBatch}
@@ -511,7 +516,7 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
                       >
                         详情
                       </Button>
-                      {canSubmit && (
+                      {!readOnly && canSubmit && (
                         <>
                           <Button
                             size="sm"
@@ -529,7 +534,7 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
                           </Button>
                         </>
                       )}
-                      {canDelete && (
+                      {!readOnly && canDelete && (
                         <Button
                           size="sm"
                           variant="ghost"
@@ -745,13 +750,36 @@ export function StoryboardTable({ projectId, storyboards, onUpdate }: Props) {
 
             <div className="space-y-2">
               <label className="text-sm font-medium">Seed（可选）</label>
-              <Input
-                value={editSeed}
-                onChange={(e) => setEditSeed(e.target.value)}
-                inputMode="numeric"
-                placeholder="留空则使用项目 seed"
-                className="w-56"
-              />
+              <div className="flex items-center gap-2">
+                <Input
+                  value={editSeed}
+                  onChange={(e) => setEditSeed(e.target.value)}
+                  inputMode="numeric"
+                  placeholder={inSeries ? "留空则使用 Series 默认 seed" : "留空则使用项目 seed"}
+                  className="w-56"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setEditSeed(String(Math.floor(Math.random() * MAX_STORYBOARD_SEED) + 1))}
+                >
+                  随机
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setEditSeed("")}
+                >
+                  清空
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {inSeries
+                  ? "Series 默认 seed = 0 时每次提交自动随机；非 0 时全 Series 统一。"
+                  : "留空时使用项目 seed；项目 seed 为 0 则自动随机。"}
+              </p>
             </div>
 
             <Separator />

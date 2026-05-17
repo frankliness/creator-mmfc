@@ -80,7 +80,7 @@
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-lg font-semibold text-[var(--text-primary)]">我的项目</h2>
           <button 
-            @click="createNewProject"
+            @click="openCreateModal"
             class="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-[var(--accent-color)] hover:bg-[var(--accent-hover)] text-white transition-colors"
           >
             <n-icon :size="16"><AddOutline /></n-icon>
@@ -93,7 +93,7 @@
           <n-icon :size="48" class="text-[var(--text-secondary)] mb-4"><FolderOutline /></n-icon>
           <p class="text-[var(--text-secondary)] mb-4">还没有项目，创建一个开始吧</p>
           <button 
-            @click="createNewProject"
+            @click="openCreateModal"
             class="px-4 py-2 text-sm rounded-lg bg-[var(--accent-color)] hover:bg-[var(--accent-hover)] text-white transition-colors"
           >
             创建第一个项目
@@ -169,7 +169,7 @@
     <!-- Left sidebar | 左侧边栏 -->
     <aside class="fixed left-4 top-1/2 -translate-y-1/2 hidden md:flex flex-col gap-2 p-2 bg-[var(--bg-secondary)] rounded-xl border border-[var(--border-color)] shadow-sm">
       <button 
-        @click="createNewProject"
+        @click="openCreateModal"
         class="p-2 hover:bg-[var(--bg-tertiary)] rounded-lg transition-colors"
         title="新建项目"
       >
@@ -195,6 +195,29 @@
         <n-button type="primary" @click="confirmRename">确定</n-button>
       </template>
     </n-modal>
+
+    <!-- Create project modal | 新建项目弹窗（含 Series 绑定） -->
+    <n-modal v-model:show="showCreateModal" preset="dialog" title="新建项目">
+      <div class="space-y-3">
+        <div>
+          <div class="mb-1 text-sm text-[var(--text-secondary)]">项目名称</div>
+          <n-input v-model:value="createName" placeholder="例如：第 1 集 · 分镜画布" />
+        </div>
+        <div>
+          <div class="mb-1 text-sm text-[var(--text-secondary)]">归属 Series <span class="text-red-500">*</span></div>
+          <n-select
+            v-model:value="createSeriesId"
+            :options="seriesOptions"
+            placeholder="请选择归属的 Series"
+            :loading="seriesLoading"
+          />
+        </div>
+      </div>
+      <template #action>
+        <n-button @click="showCreateModal = false" :disabled="creating">取消</n-button>
+        <n-button type="primary" :loading="creating" :disabled="!createSeriesId" @click="confirmCreate">创建</n-button>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -205,7 +228,7 @@
  */
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { NIcon, NDropdown, NModal, NInput, NButton, useDialog } from 'naive-ui'
+import { NIcon, NDropdown, NModal, NInput, NButton, NSelect, useDialog } from 'naive-ui'
 import { 
   AddOutline, 
   ImageOutline, 
@@ -278,6 +301,61 @@ const inputText = ref('')
 // Rename modal state | 重命名弹窗状态
 const showRenameModal = ref(false)
 const renameValue = ref('')
+
+// Create modal state | 新建项目弹窗状态（v1.9.0）
+const showCreateModal = ref(false)
+const createName = ref('未命名项目')
+const createSeriesId = ref(null)
+const seriesOptions = ref([])
+const seriesLoading = ref(false)
+const seriesLoaded = ref(false)
+const creating = ref(false)
+
+async function ensureSeriesLoaded() {
+  if (seriesLoaded.value) return
+  seriesLoading.value = true
+  try {
+    const res = await fetch('/api/workspace/series', { credentials: 'include' })
+    if (!res.ok) throw new Error('加载 Series 列表失败')
+    const list = await res.json()
+    seriesOptions.value = (Array.isArray(list) ? list : [])
+      .filter((s) => s.myRole !== 'VIEWER')
+      .map((s) => ({
+        label: s.myRole === 'OWNER' ? `${s.name}（导演）` : s.name,
+        value: s.seriesId,
+      }))
+    seriesLoaded.value = true
+  } catch (err) {
+    console.error('[Home] load series failed:', err)
+    seriesOptions.value = []
+  } finally {
+    seriesLoading.value = false
+  }
+}
+
+const openCreateModal = () => {
+  createName.value = '未命名项目'
+  createSeriesId.value = null
+  showCreateModal.value = true
+  ensureSeriesLoaded()
+}
+
+const confirmCreate = async () => {
+  if (!createSeriesId.value) return
+  const name = (createName.value || '').trim() || '未命名项目'
+  creating.value = true
+  try {
+    const id = await createProject({ name, seriesId: createSeriesId.value })
+    if (id) {
+      showCreateModal.value = false
+      router.push(`/edit/${id}`)
+    }
+  } catch (err) {
+    console.error('[Home] confirmCreate failed:', err)
+  } finally {
+    creating.value = false
+  }
+}
 const renameTargetId = ref(null)
 
 // Suggestions tags | 建议标签

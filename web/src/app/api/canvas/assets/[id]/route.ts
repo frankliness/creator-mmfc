@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authError, requireCanvasUser } from "@/lib/canvas/canvas-auth";
 import { readCanvasAsset } from "@/lib/canvas/canvas-storage";
+import { getMembership } from "@/lib/series-membership";
 
 export const runtime = "nodejs";
 
 /**
  * 鉴权后回吐资源字节流。
- * 仅资源所属用户本人可读（避免 publicUrl 被外部猜测访问）。
+ * - 资源 owner 本人可读
+ * - v1.9.0：资源所属 CanvasProject 归属某 Series 时，该 Series 的 ACTIVE 成员（含 VIEWER）也可读
  */
 export async function GET(
   req: NextRequest,
@@ -25,10 +27,23 @@ export async function GET(
       bytes: true,
       localPath: true,
       gcsPath: true,
+      project: {
+        select: { seriesId: true },
+      },
     },
   });
 
-  if (!asset || asset.userId !== auth.user.id) {
+  if (!asset) {
+    return NextResponse.json({ error: "资源不存在" }, { status: 404 });
+  }
+
+  // 鉴权：owner OR series 成员
+  let allowed = asset.userId === auth.user.id;
+  if (!allowed && asset.project?.seriesId) {
+    const m = await getMembership(auth.user.id, asset.project.seriesId);
+    if (m) allowed = true;
+  }
+  if (!allowed) {
     return NextResponse.json({ error: "资源不存在" }, { status: 404 });
   }
 

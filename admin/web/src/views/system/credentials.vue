@@ -156,14 +156,36 @@
             </a-form-item>
           </a-col>
           <a-col :span="12">
-            <a-form-item label="并发上限（画布生图）">
+            <a-form-item label="默认并发上限（画布生图）">
               <a-input-number v-model:value="form.concurrency" :min="1" :max="200" style="width: 100%" />
               <div style="color: #999; font-size: 12px; margin-top: 4px">
-                Azure gpt-image-2 实测约 6；多渠道之和 = 实际可用画布并发。
+                未在下方"按模型并发"列出的 modelKey 使用此值。
               </div>
             </a-form-item>
           </a-col>
         </a-row>
+
+        <a-form-item label="按模型独立并发（可选）">
+          <div style="color: #999; font-size: 12px; margin-bottom: 8px">
+            为该渠道下不同模型设置独立并发上限，不同模型之间不共享。未列出的 modelKey 回退到上面"默认并发上限"。
+          </div>
+          <div v-for="(row, idx) in form.concurrencyByModelRows" :key="idx" style="display: flex; gap: 8px; margin-bottom: 6px;">
+            <a-input
+              v-model:value="row.modelKey"
+              placeholder="modelKey 如 seedream-4-0"
+              style="flex: 1"
+            />
+            <a-input-number
+              v-model:value="row.concurrency"
+              :min="1"
+              :max="200"
+              placeholder="并发"
+              style="width: 100px"
+            />
+            <a-button danger size="small" @click="removeConcurrencyRow(idx)">删除</a-button>
+          </div>
+          <a-button size="small" @click="addConcurrencyRow">+ 添加模型并发</a-button>
+        </a-form-item>
       </a-form>
     </a-modal>
   </div>
@@ -219,12 +241,18 @@ const testingId = ref<string | null>(null);
 const showDialog = ref(false);
 const editing = ref<Credential | null>(null);
 
-const form = reactive<Required<Omit<CredentialInput, "deployment" | "apiVersion" | "remark">> & {
+interface ConcurrencyByModelRow {
+  modelKey: string;
+  concurrency: number;
+}
+
+const form = reactive<Required<Omit<CredentialInput, "deployment" | "apiVersion" | "remark" | "concurrencyByModel">> & {
   deployment: string;
   apiVersion: string;
   remark: string;
   purposes: CredentialPurpose[];
   modelKeysText: string;
+  concurrencyByModelRows: ConcurrencyByModelRow[];
 }>({
   provider: "openai",
   name: "",
@@ -240,7 +268,15 @@ const form = reactive<Required<Omit<CredentialInput, "deployment" | "apiVersion"
   sortOrder: 100,
   remark: "",
   concurrency: 6,
+  concurrencyByModelRows: [],
 });
+
+function addConcurrencyRow() {
+  form.concurrencyByModelRows.push({ modelKey: "", concurrency: 4 });
+}
+function removeConcurrencyRow(idx: number) {
+  form.concurrencyByModelRows.splice(idx, 1);
+}
 
 const baseUrlPlaceholder = computed(() => {
   switch (form.provider) {
@@ -331,6 +367,7 @@ const resetForm = () => {
   form.sortOrder = 100;
   form.remark = "";
   form.concurrency = 6;
+  form.concurrencyByModelRows = [];
 };
 
 const openCreate = () => {
@@ -354,6 +391,12 @@ const openEdit = (rec: Credential) => {
   form.sortOrder = rec.sortOrder;
   form.remark = rec.remark ?? "";
   form.concurrency = rec.concurrency ?? 6;
+  form.concurrencyByModelRows = rec.concurrencyByModel
+    ? Object.entries(rec.concurrencyByModel).map(([modelKey, concurrency]) => ({
+        modelKey,
+        concurrency: Number(concurrency),
+      }))
+    : [];
   showDialog.value = true;
 };
 
@@ -389,6 +432,16 @@ const submit = async () => {
     sortOrder: form.sortOrder,
     remark: form.remark.trim() || null,
     concurrency: form.concurrency,
+    concurrencyByModel: (() => {
+      const map: Record<string, number> = {};
+      for (const r of form.concurrencyByModelRows) {
+        const k = r.modelKey.trim();
+        if (!k) continue;
+        const v = Number(r.concurrency);
+        if (Number.isFinite(v) && v > 0) map[k] = Math.floor(v);
+      }
+      return Object.keys(map).length > 0 ? map : null;
+    })(),
   };
   if (form.apiKey.trim()) payload.apiKey = form.apiKey.trim();
 

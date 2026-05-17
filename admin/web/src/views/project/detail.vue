@@ -1,6 +1,6 @@
 <template>
   <div v-if="project">
-    <a-page-header :title="project.name" :sub-title="`by ${project.user?.email}`" @back="$router.back()">
+    <a-page-header :title="project.name" :sub-title="project.user ? (project.user.name ? `${project.user.name} (${project.user.email})` : project.user.email) : ''" @back="$router.back()">
       <template #extra>
         <a-tag :color="project.status === 'COMPLETED' ? 'green' : project.status === 'FAILED' ? 'red' : 'blue'">{{ project.status }}</a-tag>
       </template>

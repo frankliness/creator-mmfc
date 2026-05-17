@@ -10,7 +10,11 @@ export const CANVAS_IMAGE_USER_SHARE_CAP_PCT_KEY =
 export const CANVAS_IMAGE_ZOMBIE_GRACE_MS_KEY = "canvas_image_zombie_grace_ms";
 export const CANVAS_IMAGE_ROTATION_ENABLED_KEY = "canvas_image_rotation_enabled";
 
-const DEFAULT_GLOBAL_CONCURRENCY = 15;
+// v1.9.1：全局并发改为"机器/数据库压力的安全闸"，不再作为日常瓶颈。
+// 实际节流主要由 per-(credential, model) 与 per-(user, model) 决定。
+// 部署时建议把 GlobalConfig.canvas_image_global_concurrency 设为
+// (各渠道各模型并发之和) × 1.5 左右，并通过 env 覆盖默认值。
+const DEFAULT_GLOBAL_CONCURRENCY = 200;
 const DEFAULT_USER_CONCURRENCY = 3;
 const DEFAULT_TASK_TIMEOUT_MS = 1_800_000;
 // 单用户最多占用全局并发的百分比上限（整数 1-100）。防止一个用户独占全局槽位。

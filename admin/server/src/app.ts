@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
+import { ZodError } from "zod";
 import { authRoutes } from "./modules/auth/auth.routes.js";
 import { userRoutes } from "./modules/user/user.routes.js";
 import { projectRoutes } from "./modules/project/project.routes.js";
@@ -18,6 +19,7 @@ import { connectionTestRoutes } from "./modules/connection-test/connection-test.
 import { modelRegistryRoutes } from "./modules/model-registry/model-registry.routes.js";
 import { credentialsRoutes } from "./modules/credentials/credentials.routes.js";
 import { canvasChannelStatsRoutes } from "./modules/canvas-channel-stats/canvas-channel-stats.routes.js";
+import { seriesRoutes } from "./modules/series/series.routes.js";
 
 function parseCorsOrigins(): string | string[] {
   const raw = process.env.CORS_ORIGIN || "http://localhost:8080";
@@ -57,6 +59,19 @@ export async function buildApp() {
   await app.register(modelRegistryRoutes, { prefix: "/api/admin/model-registry" });
   await app.register(credentialsRoutes, { prefix: "/api/admin/credentials" });
   await app.register(canvasChannelStatsRoutes, { prefix: "/api/admin/canvas-channel-stats" });
+  await app.register(seriesRoutes, { prefix: "/api/admin/series" });
+
+  app.setErrorHandler((err: unknown, _request, reply) => {
+    if (err instanceof ZodError) {
+      const first = err.issues[0];
+      const field = first?.path?.join(".") ?? "unknown";
+      const msg = first?.message ?? "参数校验失败";
+      return reply.code(400).send({ error: `${field}: ${msg}` });
+    }
+    const e = err as { statusCode?: number; message?: string };
+    reply.log.error(err);
+    reply.code(e.statusCode ?? 500).send({ error: e.message || "Internal Server Error" });
+  });
 
   app.get("/api/admin/health", async () => ({ status: "ok" }));
 

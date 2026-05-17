@@ -9,6 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { StoryboardTable } from "@/components/storyboard-table";
 import { ManualProjectPanel } from "@/components/manual-project-panel";
+import { SeedanceBudgetBar, type BudgetEntry } from "@/components/seedance-budget-bar";
+import { SeriesCanvasLauncher } from "@/components/series-canvas-launcher";
 import { toast } from "sonner";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -25,6 +27,11 @@ const statusLabels: Record<string, string> = {
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
   const [refreshing, setRefreshing] = useState(false);
+  const { data: budgets } = useSWR<BudgetEntry[]>(
+    id ? `/api/projects/${id}/budget` : null,
+    fetcher,
+  );
+
   const { data: project, error, mutate } = useSWR(`/api/projects/${id}`, fetcher, {
     refreshInterval: (data) => {
       if (!data) return 0;
@@ -40,6 +47,10 @@ export default function ProjectPage() {
 
   if (error) return <div className="text-destructive">加载失败</div>;
   if (!project) return <div className="text-muted-foreground">加载中...</div>;
+
+  const isViewer = project.myRole === "VIEWER";
+  const isLocked = !!project.lockedReason;
+  const isReadOnly = isViewer || isLocked;
 
   async function handleGenerateStoryboards() {
     toast.info("正在生成分镜，请稍候...");
@@ -68,6 +79,12 @@ export default function ProjectPage() {
               <Badge variant="secondary">
                 {statusLabels[project.status] || project.status}
               </Badge>
+              {isLocked && (
+                <Badge variant="destructive" title={project.lockedReason}>🔒 已锁定</Badge>
+              )}
+              {isViewer && !isLocked && (
+                <Badge variant="outline">👁 只读</Badge>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -93,9 +110,18 @@ export default function ProjectPage() {
         </CardContent>
       </Card>
 
+      {budgets && budgets.length > 0 && (
+        <SeedanceBudgetBar budgets={budgets} />
+      )}
+
+      {/* Canvas 入口（仅 series 项目展示） */}
+      {project.seriesId && (
+        <SeriesCanvasLauncher seriesId={project.seriesId} readOnly={isReadOnly} />
+      )}
+
       <Separator />
 
-      {!["GENERATING_STORYBOARDS", "GENERATING_VIDEOS"].includes(project.status) && (
+      {!isReadOnly && !["GENERATING_STORYBOARDS", "GENERATING_VIDEOS"].includes(project.status) && (
         <ManualProjectPanel
           project={project}
           onUpdate={mutate}
@@ -119,7 +145,7 @@ export default function ProjectPage() {
           >
             {refreshing ? "刷新中..." : "刷新状态"}
           </Button>
-          {project.creationMode !== "MANUAL" &&
+          {!isReadOnly && project.creationMode !== "MANUAL" &&
             ["DRAFT", "FAILED", "REVIEW", "COMPLETED"].includes(
               project.status
             ) && (
@@ -127,7 +153,9 @@ export default function ProjectPage() {
                 onClick={handleGenerateStoryboards}
                 variant="outline"
               >
-                重新生成分镜
+                {project.storyboards && project.storyboards.length > 0
+                  ? "重新生成分镜"
+                  : "生成分镜"}
               </Button>
             )}
         </div>
@@ -152,6 +180,8 @@ export default function ProjectPage() {
           storyboards={project.storyboards}
           projectStatus={project.status}
           onUpdate={mutate}
+          readOnly={isReadOnly}
+          inSeries={!!project.seriesId}
         />
       )}
 
@@ -173,8 +203,11 @@ export default function ProjectPage() {
           project.status
         ) && (
           <Card>
-            <CardContent className="flex items-center justify-center py-12 text-muted-foreground">
-              暂无分镜数据
+            <CardContent className="flex flex-col items-center justify-center gap-2 py-10 text-center text-muted-foreground">
+              <p>尚未有分镜</p>
+              <p className="text-sm">
+                可点击「重新生成分镜」自动生成，或在上方「项目信息编辑」卡片中点击「添加分镜（自动编号）」手动创建
+              </p>
             </CardContent>
           </Card>
         )}

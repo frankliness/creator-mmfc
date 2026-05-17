@@ -3,8 +3,9 @@
   <div class="text-node-wrapper" @mouseenter="showHandleMenu = true" @mouseleave="showHandleMenu = false">
     <!-- Text node | 文本节点 -->
     <div
-      class="text-node bg-[var(--bg-secondary)] rounded-xl border min-w-[280px] max-w-[350px] relative transition-all duration-200"
-      :class="data.selected ? 'border-1 border-blue-500 shadow-lg shadow-blue-500/20' : 'border border-[var(--border-color)]'">
+      class="text-node bg-[var(--bg-secondary)] rounded-xl border relative"
+      :class="[data.selected ? 'border-1 border-blue-500 shadow-lg shadow-blue-500/20' : 'border border-[var(--border-color)]', isResizing ? '' : 'transition-all duration-200']"
+      :style="textNodeStyle">
       <!-- Header | 头部 -->
       <div class="flex items-center justify-between px-3 py-2 border-b border-[var(--border-color)]">
         <span
@@ -56,6 +57,7 @@
             @wheel.stop
             @mousedown.stop
             :data-placeholder="placeholder"
+            :style="editorStyle"
           ></div>
         </div>
         <!-- Polish button | 润色按钮 -->
@@ -74,6 +76,9 @@
       <NodeHandleMenu :nodeId="id" nodeType="text" :visible="showHandleMenu" :operations="operations" @select="handleSelect" />
       <Handle type="target" :position="Position.Left" id="left" class="!bg-[var(--accent-color)]" />
 
+      <!-- Resize handle | 拖拽缩放手柄 -->
+      <div class="resize-handle" @mousedown.stop="startResize" />
+
     </div>
 
     <!-- Mentions picker | @ 选择器 -->
@@ -91,7 +96,7 @@
  * Text node component | 文本节点组件
  * Allows user to input and edit text content
  */
-import { ref, watch, nextTick, computed, onMounted } from 'vue'
+import { ref, watch, nextTick, computed, onMounted, onUnmounted } from 'vue'
 import { Handle, Position, useVueFlow } from '@vue-flow/core'
 import { NIcon, NSpin } from 'naive-ui'
 import { TrashOutline, ExpandOutline, CopyOutline, ImageOutline, VideocamOutline, ChatbubbleOutline, CreateOutline } from '@vicons/ionicons5'
@@ -109,7 +114,13 @@ const props = defineProps({
 })
 
 // Vue Flow instance | Vue Flow 实例
-const { updateNodeInternals } = useVueFlow()
+const { updateNodeInternals, getViewport } = useVueFlow()
+
+// Resize constants | 拖拽缩放常量
+const MIN_WIDTH = 240
+const MIN_HEIGHT = 60
+const DEFAULT_WIDTH = 320
+const DEFAULT_HEIGHT = 120
 
 // API config state | API 配置状态
 const modelStore = useModelStore()
@@ -127,6 +138,46 @@ const placeholder = '请输入文本内容，输入 @ 可引用图片节点...'
 const isEditingLabel = ref(false)
 const editingLabelValue = ref('')
 const labelInputRef = ref(null)
+
+// Node size (persisted in data) | 节点尺寸（持久化到 data）
+const isResizing = ref(false)
+const nodeWidth = computed(() => props.data?.width || DEFAULT_WIDTH)
+const nodeHeight = computed(() => props.data?.height || DEFAULT_HEIGHT)
+
+const textNodeStyle = computed(() => ({ width: `${nodeWidth.value}px` }))
+const editorStyle = computed(() => ({ maxHeight: `${nodeHeight.value}px` }))
+
+// Resize drag state | 拖拽状态变量
+let _rsX = 0, _rsY = 0, _rsW = 0, _rsH = 0
+
+const startResize = (e) => {
+  isResizing.value = true
+  _rsX = e.clientX
+  _rsY = e.clientY
+  _rsW = nodeWidth.value
+  _rsH = nodeHeight.value
+  window.addEventListener('mousemove', onResizeMove)
+  window.addEventListener('mouseup', stopResize)
+}
+
+const onResizeMove = (e) => {
+  const zoom = getViewport().zoom || 1
+  const newW = Math.max(MIN_WIDTH, _rsW + (e.clientX - _rsX) / zoom)
+  const newH = Math.max(MIN_HEIGHT, _rsH + (e.clientY - _rsY) / zoom)
+  updateNode(props.id, { width: Math.round(newW), height: Math.round(newH) })
+}
+
+const stopResize = () => {
+  isResizing.value = false
+  window.removeEventListener('mousemove', onResizeMove)
+  window.removeEventListener('mouseup', stopResize)
+  nextTick(() => updateNodeInternals(props.id))
+}
+
+onUnmounted(() => {
+  window.removeEventListener('mousemove', onResizeMove)
+  window.removeEventListener('mouseup', stopResize)
+})
 
 // Polish loading state | 润色加载状态
 const isPolishing = ref(false)
@@ -816,6 +867,36 @@ const handleVideoGen = () => {
 .text-node {
   cursor: default;
   position: relative;
+  min-width: 240px;
+}
+
+/* Resize handle | 拖拽缩放手柄 */
+.resize-handle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  z-index: 10;
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--border-color);
+  border-bottom: 2px solid var(--border-color);
+  border-radius: 1px;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+}
+
+.text-node:hover .resize-handle::after {
+  opacity: 1;
 }
 
 /* Textarea wrapper - 参考 MaterialInput input-with-mention */
@@ -826,7 +907,7 @@ const handleVideoGen = () => {
 /* Editor styles | 编辑器样式 - 参考 MaterialInput */
 .editor-content {
   min-height: 60px;
-  max-height: 120px;
+  max-height: 120px; /* overridden by :style binding when resized */
   padding: 8px 10px;
   border: none;
   border-radius: 8px;

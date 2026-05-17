@@ -15,7 +15,7 @@
       <a-descriptions-item label="Seed">{{ task.seed }}</a-descriptions-item>
       <a-descriptions-item label="Completion Tokens">{{ task.completionTokens }}</a-descriptions-item>
       <a-descriptions-item label="Total Tokens">{{ task.totalTokens }}</a-descriptions-item>
-      <a-descriptions-item label="用户">{{ task.storyboard?.project?.user?.email }}</a-descriptions-item>
+      <a-descriptions-item label="用户">{{ task.storyboard?.project?.user ? (task.storyboard.project.user.name ? `${task.storyboard.project.user.name} (${task.storyboard.project.user.email})` : task.storyboard.project.user.email) : '—' }}</a-descriptions-item>
       <a-descriptions-item label="项目">
         <a-button type="link" @click="$router.push(`/projects/${task.storyboard?.project?.id}`)">{{ task.storyboard?.project?.name }}</a-button>
       </a-descriptions-item>

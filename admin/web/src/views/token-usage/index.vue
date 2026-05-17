@@ -56,6 +56,57 @@
         </a-card>
       </a-tab-pane>
 
+      <a-tab-pane key="project" tab="按项目维度（Series / 集数 / 用户）">
+        <a-space wrap style="margin-bottom: 16px">
+          <a-select v-model:value="projRange" style="width: 180px" @change="handleProjRangeChange">
+            <a-select-option value="today">今日（北京时间）</a-select-option>
+            <a-select-option value="7">近 7 天</a-select-option>
+            <a-select-option value="30">近 30 天</a-select-option>
+            <a-select-option value="90">近 90 天</a-select-option>
+          </a-select>
+          <a-range-picker v-model:value="projDateRange" value-format="YYYY-MM-DD" style="width: 260px" @change="fetchProject" />
+          <a-select v-model:value="selectedSeriesId" placeholder="筛选 Series（可选）" allow-clear style="width: 240px" @change="fetchProject">
+            <a-select-option v-for="s in bySeriesData" :key="s.seriesId" :value="s.seriesId">
+              {{ s.seriesName || s.seriesId }}
+            </a-select-option>
+          </a-select>
+          <a-button type="primary" @click="fetchProject">查询</a-button>
+          <a-button @click="resetProjFilters">重置</a-button>
+        </a-space>
+
+        <a-card title="① 按 Series 汇总" size="small" style="margin-bottom: 16px">
+          <a-table
+            :columns="seriesColumns"
+            :data-source="bySeriesData"
+            :row-key="(r: any) => r.seriesId ?? 'null'"
+            size="small"
+            :pagination="false"
+            :custom-row="(record: any) => ({ onClick: () => onSelectSeries(record.seriesId), style: { cursor: 'pointer' } })"
+          />
+          <div style="margin-top: 8px; color: rgba(0,0,0,.45); font-size: 12px">提示：点击行筛选下方明细</div>
+        </a-card>
+
+        <a-card :title="`② 集数 × 用户 明细${selectedSeriesId ? '（已筛选）' : ''}`" size="small" style="margin-bottom: 16px">
+          <a-table
+            :columns="breakdownColumns"
+            :data-source="seriesBreakdownData"
+            :row-key="(r: any) => `${r.seriesId}-${r.projectId}-${r.userId}-${r.provider}`"
+            size="small"
+            :pagination="{ pageSize: 30 }"
+          />
+        </a-card>
+
+        <a-card title="③ 全项目（含 legacy）Top 100" size="small">
+          <a-table
+            :columns="projColumns"
+            :data-source="byProjectData"
+            :row-key="(r: any) => `${r.projectId}-${r.userEmail}`"
+            size="small"
+            :pagination="{ pageSize: 20 }"
+          />
+        </a-card>
+      </a-tab-pane>
+
       <a-tab-pane key="canvas" tab="AI 画布（CanvasAiCall）">
         <a-space wrap style="margin-bottom: 16px">
           <a-select v-model:value="canvasRange" style="width: 180px" @change="handleCanvasRangeChange">
@@ -105,7 +156,7 @@
 import { ref, onMounted, nextTick } from "vue";
 import dayjs from "dayjs";
 import { message } from "ant-design-vue";
-import { exportTokenUsage, exportTokenUsageByUser, getSummary, getByUser, getByProvider, getCanvasByUser, getCanvasByProject, getCanvasByModel } from "@/api/token-usage";
+import { exportTokenUsage, exportTokenUsageByUser, getSummary, getByUser, getByProvider, getCanvasByUser, getCanvasByProject, getCanvasByModel, getByProject, getBySeries, getBySeriesBreakdown } from "@/api/token-usage";
 import * as echarts from "echarts";
 
 const activeTab = ref("all");
@@ -126,6 +177,12 @@ const userRanking = ref<any[]>([]);
 const canvasByUser = ref<any[]>([]);
 const canvasByProject = ref<any[]>([]);
 const canvasByModel = ref<any[]>([]);
+const byProjectData = ref<any[]>([]);
+const bySeriesData = ref<any[]>([]);
+const seriesBreakdownData = ref<any[]>([]);
+const selectedSeriesId = ref<string | undefined>(undefined);
+const projRange = ref("30");
+const projDateRange = ref<string[]>([]);
 
 const userColumns = [
   { title: "排名", customRender: ({ index }: any) => index + 1, width: 60 },
@@ -155,6 +212,34 @@ const canvasModelColumns = [
   { title: "模型", dataIndex: "model", ellipsis: true },
   { title: "Token", dataIndex: "total", customRender: ({ text }: any) => Number(text).toLocaleString() },
   { title: "次数", dataIndex: "count" },
+];
+
+const seriesColumns = [
+  { title: "Series", dataIndex: "seriesName", ellipsis: true, customRender: ({ text, record }: any) => text || record.seriesId || '(无 Series)' },
+  { title: "集数数", dataIndex: "episodeCount" },
+  { title: "用户数", dataIndex: "userCount" },
+  { title: "总 Token", dataIndex: "total", customRender: ({ text }: any) => Number(text).toLocaleString() },
+  { title: "调用次数", dataIndex: "count" },
+];
+
+const breakdownColumns = [
+  { title: "Series", dataIndex: "seriesName", ellipsis: true, customRender: ({ text, record }: any) => text || record.seriesId || '—' },
+  { title: "集数", key: "episode", customRender: ({ record }: any) => {
+    const num = record.episodeNumber ? `第${record.episodeNumber}集` : '—';
+    return record.episodeName ? `${num} · ${record.episodeName}` : num;
+  } },
+  { title: "用户", key: "user", customRender: ({ record }: any) => record.userName ? `${record.userName} (${record.userEmail})` : record.userEmail },
+  { title: "Provider", dataIndex: "provider", width: 110 },
+  { title: "总 Token", dataIndex: "total", customRender: ({ text }: any) => Number(text).toLocaleString() },
+  { title: "调用次数", dataIndex: "count" },
+];
+
+const projColumns = [
+  { title: "Series", dataIndex: "seriesName", ellipsis: true, customRender: ({ text }: any) => text || '—' },
+  { title: "集数/项目", dataIndex: "projectName", ellipsis: true, customRender: ({ text, record }: any) => text || record.projectId || '—' },
+  { title: "用户", key: "user", customRender: ({ record }: any) => record.userName ? `${record.userName} (${record.userEmail})` : record.userEmail },
+  { title: "总 Token", dataIndex: "total", customRender: ({ text }: any) => Number(text).toLocaleString() },
+  { title: "调用次数", dataIndex: "count" },
 ];
 
 function buildRangeParams(value: string) {
@@ -279,6 +364,38 @@ function resetCanvasFilters() {
   fetchCanvas();
 }
 
+async function fetchProject() {
+  const baseParams: Record<string, unknown> = {
+    ...(buildDateRangeParams(projDateRange.value) ?? buildRangeParams(projRange.value)),
+  };
+  const breakdownParams = { ...baseParams, ...(selectedSeriesId.value ? { seriesId: selectedSeriesId.value } : {}) };
+  const [proj, ser, brk] = await Promise.all([
+    getByProject(baseParams),
+    getBySeries(baseParams),
+    getBySeriesBreakdown(breakdownParams),
+  ]);
+  byProjectData.value = proj as any[];
+  bySeriesData.value = ser as any[];
+  seriesBreakdownData.value = brk as any[];
+}
+
+function onSelectSeries(seriesId: string) {
+  selectedSeriesId.value = selectedSeriesId.value === seriesId ? undefined : seriesId;
+  fetchProject();
+}
+
+function resetProjFilters() {
+  projRange.value = "30";
+  projDateRange.value = [];
+  selectedSeriesId.value = undefined;
+  fetchProject();
+}
+
+function handleProjRangeChange() {
+  projDateRange.value = [];
+  fetchProject();
+}
+
 function handleRangeChange() {
   dateRange.value = [];
   fetchAll();
@@ -291,6 +408,7 @@ function handleCanvasRangeChange() {
 
 function onTabChange(key: string) {
   if (key === "canvas") fetchCanvas();
+  if (key === "project") fetchProject();
 }
 
 onMounted(() => {
