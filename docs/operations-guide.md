@@ -352,85 +352,7 @@ docker compose up -d --build
 
 **PostgreSQL 端口：** 默认 **不** 映射到宿主机，仅 Docker 内网可连；若需本机 `psql` 连接，在根目录 `docker-compose.yml` 的 `postgres` 服务中取消 `ports: "5432:5432"` 的注释。
 
-**与分目录 compose 的关系：** 仍可单独使用 `web/docker-compose.yml` 或 `admin/docker-compose.yml` 调试；生产建议只用根目录一套编排，避免双实例 PostgreSQL。
-
-### 6.1 用户端 Docker 部署
-
-```bash
-cd web
-cp .env.example .env
-# 编辑 .env 填入所有配置...
-
-docker-compose up -d
-```
-
-启动 3 个容器：
-- `postgres` — PostgreSQL 数据库
-- `app` — Next.js 应用（端口 3000）
-- `worker` — Worker 轮询进程
-
-```bash
-# 查看日志
-docker-compose logs -f app
-docker-compose logs -f worker
-
-# 初始化数据库（首次部署）
-docker-compose exec app npx prisma db push
-```
-
-### 6.2 管理端 Docker 部署
-
-```bash
-cd admin
-
-# 创建 .env
-cat > .env << 'EOF'
-ADMIN_JWT_SECRET=<生成的JWT密钥>
-ENCRYPTION_KEY=<与用户端一致的加密密钥>
-EOF
-
-docker-compose up -d
-```
-
-启动 3 个容器：
-- `postgres` — PostgreSQL（如果已有可共享，去掉 admin 的 postgres 服务）
-- `admin-api` — Fastify API（端口 3100）
-- `admin-web` — Nginx + Vue 静态文件（端口 8080）
-
-### 6.3 共享 PostgreSQL 部署方案
-
-生产环境中，用户端和管理端应共享同一个 PostgreSQL 实例。
-
-**推荐架构：** 仅用户端的 docker-compose 启动 PostgreSQL，管理端连接同一实例。
-
-修改 `admin/docker-compose.yml`（`admin-api` 构建上下文为仓库上一级目录，以便打包用户端 prompt 源文件）：
-
-```yaml
-services:
-  admin-api:
-    build:
-      context: ..
-      dockerfile: admin/server/Dockerfile
-    ports:
-      - "3100:3100"
-    environment:
-      # 连接用户端的 PostgreSQL
-      DATABASE_URL: "postgresql://postgres:<密码>@<用户端主机IP>:5432/seedance"
-      ADMIN_JWT_SECRET: "${ADMIN_JWT_SECRET}"
-      ENCRYPTION_KEY: "${ENCRYPTION_KEY}"
-      CORS_ORIGIN: "${CORS_ORIGIN:-http://localhost:8080}"
-    restart: unless-stopped
-
-  admin-web:
-    build:
-      context: web
-      dockerfile: Dockerfile
-    ports:
-      - "8080:8080"
-    depends_on:
-      - admin-api
-    restart: unless-stopped
-```
+**统一入口：** 仓库内已不再保留分目录 compose；所有 Docker 部署统一从仓库根目录执行 `docker compose up -d --build`。
 
 ---
 
@@ -595,18 +517,18 @@ psql $DATABASE_URL -f ../scripts/migrate-token-data.sql
 
 ```bash
 # 查看所有容器状态
-docker-compose ps
+docker compose ps
 
 # 重启单个服务
-docker-compose restart app
-docker-compose restart worker
-docker-compose restart admin-api
+docker compose restart web-app
+docker compose restart web-worker
+docker compose restart admin-api
 
 # 查看实时日志
-docker-compose logs -f worker --tail=100
+docker compose logs -f web-worker --tail=100
 
 # 进入容器
-docker-compose exec app sh
+docker compose exec web-app sh
 ```
 
 ### 11.2 使用 PM2 管理（非 Docker 部署）

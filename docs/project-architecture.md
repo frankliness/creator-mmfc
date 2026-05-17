@@ -113,8 +113,7 @@ web/
 │   └── worker/
 │       ├── index.ts            # Worker 轮询主循环
 │       └── video-persist.ts    # 视频下载 + GCS 上传
-├── docker-compose.yml
-├── Dockerfile
+├── Dockerfile                  # 注意：build context 为仓库根目录，由根 docker-compose.yml 驱动
 └── package.json
 ```
 
@@ -158,8 +157,7 @@ admin/
 │   ├── sync-schema.sh          # 同步 Schema 到用户端
 │   ├── migrate-token-data.sql  # 历史 Token 数据迁移
 │   └── seed-prompts.ts         # 从代码库导入 Prompt 到 DB（Docker 中由环境变量指向镜像内 /app/seed-web）
-├── docker-compose.yml          # admin-api：build.context 为仓库根目录的父目录 ..，dockerfile: admin/server/Dockerfile
-└── README.md
+└── README.md                   # 子项目级 compose 已统一至仓库根目录 docker-compose.yml
 ```
 
 ---
