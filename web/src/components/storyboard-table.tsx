@@ -74,6 +74,7 @@ interface Task {
 interface Storyboard {
   id: string;
   storyboardId: string;
+  displayName?: string | null;
   sortOrder: number;
   duration: number;
   seed: number | null;
@@ -156,6 +157,42 @@ export function StoryboardTable({ projectId, storyboards, onUpdate, readOnly = f
   const [batchDownloading, setBatchDownloading] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState<Storyboard | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [savingRename, setSavingRename] = useState(false);
+
+  function startRename(sb: Storyboard) {
+    setRenamingId(sb.id);
+    setRenameValue(sb.displayName ?? "");
+  }
+
+  async function commitRename(sb: Storyboard) {
+    const next = renameValue.trim();
+    const current = sb.displayName ?? "";
+    if (next === current) {
+      setRenamingId(null);
+      return;
+    }
+    if (next.length > 80) {
+      toast.error("分镜名称最长 80 字符");
+      return;
+    }
+    setSavingRename(true);
+    const res = await fetch(`/api/storyboards/${sb.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ displayName: next || null }),
+    });
+    setSavingRename(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      toast.error(data.error || "保存失败");
+      return;
+    }
+    toast.success("已保存");
+    setRenamingId(null);
+    onUpdate();
+  }
 
   function toggleSelect(id: string) {
     setSelected((prev) => {
@@ -439,7 +476,7 @@ export function StoryboardTable({ projectId, storyboards, onUpdate, readOnly = f
                   onCheckedChange={toggleSelectAll}
                 />
               </TableHead>
-              <TableHead className="w-24">分镜</TableHead>
+              <TableHead className="w-40">分镜</TableHead>
               <TableHead className="w-16">时长</TableHead>
               <TableHead>提示词</TableHead>
               <TableHead className="w-28">资产</TableHead>
@@ -462,8 +499,54 @@ export function StoryboardTable({ projectId, storyboards, onUpdate, readOnly = f
                       disabled={!canSubmit}
                     />
                   </TableCell>
-                  <TableCell className="font-mono text-sm">
-                    {sb.storyboardId}
+                  <TableCell className="text-sm">
+                    {renamingId === sb.id ? (
+                      <Input
+                        autoFocus
+                        value={renameValue}
+                        disabled={savingRename}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onBlur={() => void commitRename(sb)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void commitRename(sb);
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            setRenamingId(null);
+                          }
+                        }}
+                        maxLength={80}
+                        className="h-7 px-2 text-sm"
+                        placeholder={sb.storyboardId}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className="group flex max-w-[160px] flex-col items-start text-left disabled:cursor-not-allowed"
+                        onDoubleClick={() => !readOnly && startRename(sb)}
+                        onClick={(e) => {
+                          if (e.detail === 2) return;
+                        }}
+                        disabled={readOnly}
+                        title={readOnly ? sb.storyboardId : "双击重命名"}
+                      >
+                        <span
+                          className={
+                            sb.displayName
+                              ? "truncate font-medium"
+                              : "truncate font-mono"
+                          }
+                        >
+                          {sb.displayName || sb.storyboardId}
+                        </span>
+                        {sb.displayName && (
+                          <span className="truncate font-mono text-[10px] text-muted-foreground">
+                            {sb.storyboardId}
+                          </span>
+                        )}
+                      </button>
+                    )}
                   </TableCell>
                   <TableCell>{formatManualStoryboardDuration(sb.duration)}</TableCell>
                   <TableCell>

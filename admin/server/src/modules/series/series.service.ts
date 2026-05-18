@@ -336,9 +336,16 @@ export async function softRemoveMember(
   memberId: string,
   operator: { id: string },
 ) {
-  return prisma.projectMember.update({
-    where: { id: memberId },
-    data: { status: "REMOVED" },
+  return prisma.$transaction(async (tx) => {
+    const before = await tx.projectMember.findUnique({ where: { id: memberId } });
+    const updated = await tx.projectMember.update({
+      where: { id: memberId },
+      data: { status: "REMOVED" },
+    });
+    if (before && before.role === "OWNER") {
+      await syncSeriesOwnerOnDemotion(tx, before.seriesId, before.userId);
+    }
+    return updated;
   });
 }
 
@@ -348,10 +355,19 @@ export async function addMember(
   role: "OWNER" | "PRODUCER" | "VIEWER",
   operator: { id: string },
 ) {
-  return prisma.projectMember.upsert({
-    where: { seriesId_userId: { seriesId, userId } },
-    update: { role, status: "ACTIVE", createdBy: operator.id },
-    create: { seriesId, userId, role, status: "ACTIVE", createdBy: operator.id },
+  return prisma.$transaction(async (tx) => {
+    if (role === "OWNER") {
+      await demoteExistingOwners(tx, seriesId, userId);
+    }
+    const m = await tx.projectMember.upsert({
+      where: { seriesId_userId: { seriesId, userId } },
+      update: { role, status: "ACTIVE", createdBy: operator.id },
+      create: { seriesId, userId, role, status: "ACTIVE", createdBy: operator.id },
+    });
+    if (role === "OWNER") {
+      await tx.series.update({ where: { id: seriesId }, data: { ownerId: userId } });
+    }
+    return m;
   });
 }
 
@@ -359,12 +375,63 @@ export async function updateMember(
   memberId: string,
   patch: { role?: "OWNER" | "PRODUCER" | "VIEWER"; status?: "ACTIVE" | "REMOVED" },
 ) {
-  return prisma.projectMember.update({
-    where: { id: memberId },
-    data: {
-      role: patch.role,
-      status: patch.status,
+  return prisma.$transaction(async (tx) => {
+    const before = await tx.projectMember.findUnique({ where: { id: memberId } });
+    if (!before) throw new Error("成员不存在");
+
+    if (patch.role === "OWNER") {
+      await demoteExistingOwners(tx, before.seriesId, before.userId);
+    }
+
+    const updated = await tx.projectMember.update({
+      where: { id: memberId },
+      data: {
+        role: patch.role,
+        status: patch.status,
+      },
+    });
+
+    if (patch.role === "OWNER" && patch.status !== "REMOVED") {
+      await tx.series.update({
+        where: { id: before.seriesId },
+        data: { ownerId: before.userId },
+      });
+    } else if (
+      before.role === "OWNER" &&
+      (patch.role && patch.role !== "OWNER" || patch.status === "REMOVED")
+    ) {
+      await syncSeriesOwnerOnDemotion(tx, before.seriesId, before.userId);
+    }
+
+    return updated;
+  });
+}
+
+type SeriesOwnerTx = Prisma.TransactionClient;
+
+async function demoteExistingOwners(tx: SeriesOwnerTx, seriesId: string, excludingUserId: string) {
+  await tx.projectMember.updateMany({
+    where: {
+      seriesId,
+      role: "OWNER",
+      status: "ACTIVE",
+      userId: { not: excludingUserId },
     },
+    data: { role: "PRODUCER" },
+  });
+}
+
+async function syncSeriesOwnerOnDemotion(tx: SeriesOwnerTx, seriesId: string, demotedUserId: string) {
+  const series = await tx.series.findUnique({ where: { id: seriesId }, select: { ownerId: true } });
+  if (!series || series.ownerId !== demotedUserId) return;
+  const fallback = await tx.projectMember.findFirst({
+    where: { seriesId, role: "OWNER", status: "ACTIVE" },
+    orderBy: { createdAt: "asc" },
+    select: { userId: true },
+  });
+  await tx.series.update({
+    where: { id: seriesId },
+    data: { ownerId: fallback?.userId ?? null },
   });
 }
 

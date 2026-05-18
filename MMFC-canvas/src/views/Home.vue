@@ -333,9 +333,13 @@ async function ensureSeriesLoaded() {
   }
 }
 
+// 待用 prompt（聊天框路径才会有值，确认创建后写入 sessionStorage 供画布消费）
+const pendingPrompt = ref('')
+
 const openCreateModal = () => {
   createName.value = '未命名项目'
   createSeriesId.value = null
+  pendingPrompt.value = ''
   showCreateModal.value = true
   ensureSeriesLoaded()
 }
@@ -347,6 +351,11 @@ const confirmCreate = async () => {
   try {
     const id = await createProject({ name, seriesId: createSeriesId.value })
     if (id) {
+      if (pendingPrompt.value) {
+        sessionStorage.setItem('ai-canvas-initial-prompt', pendingPrompt.value)
+        pendingPrompt.value = ''
+        inputText.value = ''
+      }
       showCreateModal.value = false
       router.push(`/edit/${id}`)
     }
@@ -452,17 +461,15 @@ const createNewProject = async () => {
   }
 }
 
-const handleCreateWithInput = async () => {
-  try {
-    const name = inputText.value.trim() || '未命名项目'
-    const id = await createProject(name)
-    if (!id) return
-    sessionStorage.setItem('ai-canvas-initial-prompt', inputText.value.trim())
-    inputText.value = ''
-    router.push(`/edit/${id}`)
-  } catch (err) {
-    console.error('[Home] handleCreateWithInput failed:', err)
-  }
+const handleCreateWithInput = () => {
+  const prompt = inputText.value.trim()
+  if (!prompt) return
+  // 聊天框提交必须绑定 Series：复用新建项目 modal，把当前输入暂存为创建后写入的 initial prompt
+  createName.value = prompt.slice(0, 40) || '未命名项目'
+  createSeriesId.value = null
+  pendingPrompt.value = prompt
+  showCreateModal.value = true
+  ensureSeriesLoaded()
 }
 
 const openProject = (project) => {

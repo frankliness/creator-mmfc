@@ -68,12 +68,25 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     signIn: "/login",
   },
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger, session }) {
       // 登录时把 sid 写入 token
       if (user) {
         token.id = (user as { id: string }).id;
         const sid = (user as { sid?: string }).sid;
         if (sid) token.sid = sid;
+      }
+
+      // 客户端 useSession().update() 触发：从 DB 重读最新昵称，避免客户端伪造其他字段
+      if (trigger === "update" && token.id) {
+        const fresh = await prisma.user.findUnique({
+          where: { id: token.id as string },
+          select: { name: true },
+        });
+        if (fresh) token.name = fresh.name;
+        // 兼容前端直接传 name 的情形（DB 也已通过 PATCH /api/auth/me 写入）
+        if (session && typeof (session as { name?: unknown }).name === "string") {
+          token.name = (session as { name: string }).name;
+        }
       }
 
       // 每次请求校验 token.sid 是否仍是 User.activeSessionId；不一致 -> 失效（另一会话登录踢掉此 token）

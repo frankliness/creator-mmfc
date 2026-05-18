@@ -7,10 +7,13 @@
       <a-descriptions size="small" :column="3">
         <a-descriptions-item label="ID">{{ data?.id }}</a-descriptions-item>
         <a-descriptions-item label="导演">
-          <span v-if="data?.owner">
-            {{ data.owner.name ? `${data.owner.name} (${data.owner.email})` : data.owner.email }}
-          </span>
-          <span v-else>—</span>
+          <a-space>
+            <span v-if="data?.owner">
+              {{ data.owner.name ? `${data.owner.name} (${data.owner.email})` : data.owner.email }}
+            </span>
+            <span v-else>—</span>
+            <a-button v-if="canWrite" type="link" size="small" @click="openChangeOwner">更换</a-button>
+          </a-space>
         </a-descriptions-item>
         <a-descriptions-item label="创建时间">{{ data ? new Date(data.createdAt).toLocaleString() : "—" }}</a-descriptions-item>
       </a-descriptions>
@@ -251,6 +254,22 @@
       </a-form>
     </a-modal>
 
+    <!-- 更换导演 -->
+    <a-modal v-model:open="changeOwnerOpen" title="更换导演" @ok="onConfirmChangeOwner">
+      <a-form layout="vertical">
+        <a-form-item label="新导演">
+          <a-select
+            v-model:value="changeOwnerUserId"
+            show-search
+            option-filter-prop="label"
+            placeholder="选择用户（也会自动成为 Series 成员并升级为 OWNER）"
+            :options="userOptions"
+            style="width: 100%"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
     <!-- 调整预算抽屉 -->
     <a-modal v-model:open="adjustModalOpen" title="调整总预算" @ok="onConfirmAdjust">
       <a-form layout="vertical">
@@ -462,6 +481,28 @@ async function onRemoveMember(memberId: string) {
     await load();
   } catch (e: any) {
     message.error(e?.response?.data?.error || "移除失败");
+  }
+}
+
+const changeOwnerOpen = ref(false);
+const changeOwnerUserId = ref<string | undefined>();
+function openChangeOwner() {
+  changeOwnerUserId.value = data.value?.owner?.id ?? undefined;
+  changeOwnerOpen.value = true;
+}
+async function onConfirmChangeOwner() {
+  if (!changeOwnerUserId.value) return message.warning("请选择用户");
+  if (changeOwnerUserId.value === data.value?.owner?.id) {
+    changeOwnerOpen.value = false;
+    return;
+  }
+  try {
+    await updateSeries(seriesId, { ownerId: changeOwnerUserId.value });
+    message.success("已更换导演");
+    changeOwnerOpen.value = false;
+    await load();
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || "更换导演失败");
   }
 }
 

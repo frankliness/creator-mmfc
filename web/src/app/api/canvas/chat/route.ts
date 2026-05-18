@@ -22,7 +22,7 @@ const messageContentSchema = z.union([
 ]);
 
 const bodySchema = z.object({
-  projectId: z.string().min(1).optional(),
+  projectId: z.string().min(1),
   model: z.string().min(1),
   /** v1.3.0：可选指定凭据 id（前端齿轮里挑的） */
   credentialId: z.string().min(1).optional(),
@@ -200,6 +200,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: "参数错误", details: parsed.error.flatten() },
       { status: 400 }
+    );
+  }
+
+  // 画布聊天必须绑定到 Series
+  const project = await prisma.canvasProject.findUnique({
+    where: { id: parsed.data.projectId },
+    select: { seriesId: true },
+  });
+  if (!project) {
+    return NextResponse.json({ error: "画布不存在" }, { status: 404 });
+  }
+  if (!project.seriesId) {
+    return NextResponse.json(
+      { error: "画布未绑定 Series，无法发送聊天，请先在主页弹窗中选择 Series 再创建。" },
+      { status: 400 },
     );
   }
 

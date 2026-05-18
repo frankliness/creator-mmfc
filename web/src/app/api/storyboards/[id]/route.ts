@@ -37,6 +37,12 @@ const updateSchema = z.object({
     .max(MAX_STORYBOARD_SEED)
     .nullable()
     .optional(),
+  displayName: z
+    .string()
+    .trim()
+    .max(80, "分镜名称最长 80 字符")
+    .nullable()
+    .optional(),
 });
 
 export async function PATCH(
@@ -83,6 +89,10 @@ export async function PATCH(
   if (parsed.data.seedanceContentItems !== undefined)
     data.seedanceContentItems = parsed.data.seedanceContentItems;
   if (parsed.data.seed !== undefined) data.seed = parsed.data.seed;
+  if (parsed.data.displayName !== undefined) {
+    // 空字符串/null 都表示清除自定义名，回落到 storyboardId
+    data.displayName = parsed.data.displayName ? parsed.data.displayName : null;
+  }
 
   const updated = await prisma.storyboard.update({ where: { id }, data });
 

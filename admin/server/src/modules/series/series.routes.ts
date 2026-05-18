@@ -273,8 +273,35 @@ export async function seriesRoutes(app: FastifyInstance) {
     const body = updateSeriesBody.parse(request.body);
     const before = await prisma.series.findUnique({ where: { id } });
     if (!before) return reply.code(404).send({ error: "Series 不存在" });
-    const after = await prisma.series.update({ where: { id }, data: body });
     const admin = request.user as { id: string };
+
+    // 切换 ownerId 时，同步 ProjectMember：新 owner 升为 OWNER，原 owner（如果还在）降为 PRODUCER
+    const ownerChanged = body.ownerId !== undefined && body.ownerId !== before.ownerId;
+    if (ownerChanged && body.ownerId) {
+      const user = await prisma.user.findUnique({ where: { id: body.ownerId } });
+      if (!user) return reply.code(400).send({ error: "用户不存在" });
+    }
+    const after = await prisma.$transaction(async (tx) => {
+      if (ownerChanged) {
+        if (body.ownerId) {
+          await tx.projectMember.updateMany({
+            where: { seriesId: id, role: "OWNER", status: "ACTIVE", userId: { not: body.ownerId } },
+            data: { role: "PRODUCER" },
+          });
+          await tx.projectMember.upsert({
+            where: { seriesId_userId: { seriesId: id, userId: body.ownerId } },
+            update: { role: "OWNER", status: "ACTIVE", createdBy: admin.id },
+            create: { seriesId: id, userId: body.ownerId, role: "OWNER", status: "ACTIVE", createdBy: admin.id },
+          });
+        } else if (before.ownerId) {
+          await tx.projectMember.updateMany({
+            where: { seriesId: id, userId: before.ownerId, role: "OWNER", status: "ACTIVE" },
+            data: { role: "PRODUCER" },
+          });
+        }
+      }
+      return tx.series.update({ where: { id }, data: body });
+    });
     await createAuditLog({
       adminId: admin.id,
       action: "series.update",

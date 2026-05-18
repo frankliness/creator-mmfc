@@ -13,6 +13,7 @@ import {
 import { getModelByName } from '@/config/models'
 import { useModelStore } from '@/stores/pinia'
 import { currentProjectId } from '@/stores/canvas'
+import { projects } from '@/stores/projects'
 
 /**
  * 把后端 /api/canvas/images 的返回 {images:[{url,mimeType,bytes,assetId}], revisedPrompt}
@@ -113,6 +114,18 @@ export const useChat = (options = {}) => {
 
         const projectId =
           chatOptions.projectId || options.projectId || currentProjectId.value || null
+
+        if (!projectId) {
+          const msg = '请先创建画布再发送聊天'
+          window.$message?.warning?.(msg)
+          throw new Error(msg)
+        }
+        const proj = projects.value.find((p) => p.id === projectId)
+        if (proj && !proj.seriesId) {
+          const msg = '当前画布未绑定 Series，无法发送聊天'
+          window.$message?.warning?.(msg)
+          throw new Error(msg)
+        }
 
         for await (const chunk of streamChatCompletions(
           adaptedParams,

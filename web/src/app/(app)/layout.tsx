@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { NavHeader } from "@/components/nav-header";
 
+export const dynamic = "force-dynamic";
+
 export default async function AppLayout({
   children,
 }: {

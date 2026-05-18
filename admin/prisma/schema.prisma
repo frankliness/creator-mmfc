@@ -116,6 +116,8 @@ model Storyboard {
   projectId            String
   project              Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   storyboardId         String
+  /** v1.10.0：用户自定义显示名（可空，空时回落到 storyboardId）。不参与排序/克隆算法。 */
+  displayName          String?
   sortOrder            Int
   duration             Int
   seed                 Int?
