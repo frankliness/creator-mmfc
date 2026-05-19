@@ -361,22 +361,24 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
     const { fromDate, toDate } = resolveTimeRange(query);
 
     const rows = await prisma.$queryRaw<
-      { seriesId: string | null; seriesName: string | null; total: bigint; count: bigint; userCount: bigint; episodeCount: bigint }[]
+      { seriesId: string; seriesName: string | null; total: bigint; count: bigint; userCount: bigint; episodeCount: bigint }[]
     >(Prisma.sql`
-      SELECT t."seriesId",
+      SELECT COALESCE(t."seriesId", cp."seriesId") AS "seriesId",
              s."name" AS "seriesName",
              SUM(t."totalTokens") AS total,
              COUNT(*)::bigint AS count,
              COUNT(DISTINCT t."userId")::bigint AS "userCount",
-             COUNT(DISTINCT t."projectId")::bigint AS "episodeCount"
+             COUNT(DISTINCT p."id")::bigint AS "episodeCount"
       FROM "TokenUsageLog" t
-      LEFT JOIN "Series" s ON s."id" = t."seriesId"
+      LEFT JOIN "CanvasProject" cp ON cp."id" = COALESCE(t."canvasProjectId", CASE WHEN t."requestType" LIKE 'canvas%' THEN t."projectId" END)
+      LEFT JOIN "Project" p ON p."id" = t."projectId"
+      LEFT JOIN "Series" s ON s."id" = COALESCE(t."seriesId", cp."seriesId")
       WHERE t."createdAt" >= ${fromDate}
         AND t."createdAt" < ${toDate}
-        AND t."seriesId" IS NOT NULL
+        AND COALESCE(t."seriesId", cp."seriesId") IS NOT NULL
         ${finalizedFilter("t")}
-        ${query.seriesId ? Prisma.sql`AND t."seriesId" = ${query.seriesId}` : Prisma.empty}
-      GROUP BY t."seriesId", s."name"
+        ${query.seriesId ? Prisma.sql`AND COALESCE(t."seriesId", cp."seriesId") = ${query.seriesId}` : Prisma.empty}
+      GROUP BY COALESCE(t."seriesId", cp."seriesId"), s."name"
       ORDER BY total DESC
       LIMIT 100
     `);
@@ -384,18 +386,19 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
     const breakdown = await prisma.$queryRaw<
       { seriesId: string; provider: string; model: string; total: bigint; count: bigint }[]
     >(Prisma.sql`
-      SELECT t."seriesId",
+      SELECT COALESCE(t."seriesId", cp."seriesId") AS "seriesId",
              t."provider",
              t."model",
              SUM(t."totalTokens") AS total,
              COUNT(*)::bigint AS count
       FROM "TokenUsageLog" t
+      LEFT JOIN "CanvasProject" cp ON cp."id" = COALESCE(t."canvasProjectId", CASE WHEN t."requestType" LIKE 'canvas%' THEN t."projectId" END)
       WHERE t."createdAt" >= ${fromDate}
         AND t."createdAt" < ${toDate}
-        AND t."seriesId" IS NOT NULL
+        AND COALESCE(t."seriesId", cp."seriesId") IS NOT NULL
         ${finalizedFilter("t")}
-        ${query.seriesId ? Prisma.sql`AND t."seriesId" = ${query.seriesId}` : Prisma.empty}
-      GROUP BY t."seriesId", t."provider", t."model"
+        ${query.seriesId ? Prisma.sql`AND COALESCE(t."seriesId", cp."seriesId") = ${query.seriesId}` : Prisma.empty}
+      GROUP BY COALESCE(t."seriesId", cp."seriesId"), t."provider", t."model"
       ORDER BY total DESC
     `);
 
@@ -425,6 +428,7 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
         seriesId: string;
         seriesName: string | null;
         projectId: string | null;
+        sourceType: string;
         episodeNumber: number | null;
         episodeName: string | null;
         userId: string;
@@ -436,11 +440,12 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
         count: bigint;
       }[]
     >(Prisma.sql`
-      SELECT t."seriesId",
+      SELECT COALESCE(t."seriesId", cp."seriesId") AS "seriesId",
              s."name" AS "seriesName",
-             t."projectId",
+             COALESCE(p."id", cp."id") AS "projectId",
+             CASE WHEN cp."id" IS NOT NULL THEN 'canvas' ELSE 'episode' END AS "sourceType",
              p."episodeNumber" AS "episodeNumber",
-             COALESCE(p."episodeTitle", p."name") AS "episodeName",
+             CASE WHEN cp."id" IS NOT NULL THEN cp."name" ELSE COALESCE(p."episodeTitle", p."name") END AS "episodeName",
              t."userId",
              u."email" AS "userEmail",
              u."name" AS "userName",
@@ -449,16 +454,17 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
              SUM(t."totalTokens") AS total,
              COUNT(*)::bigint AS count
       FROM "TokenUsageLog" t
-      LEFT JOIN "Series" s ON s."id" = t."seriesId"
+      LEFT JOIN "CanvasProject" cp ON cp."id" = COALESCE(t."canvasProjectId", CASE WHEN t."requestType" LIKE 'canvas%' THEN t."projectId" END)
       LEFT JOIN "Project" p ON p."id" = t."projectId"
+      LEFT JOIN "Series" s ON s."id" = COALESCE(t."seriesId", cp."seriesId")
       LEFT JOIN "User" u ON u."id" = t."userId"
       WHERE t."createdAt" >= ${fromDate}
         AND t."createdAt" < ${toDate}
-        AND t."seriesId" IS NOT NULL
+        AND COALESCE(t."seriesId", cp."seriesId") IS NOT NULL
         ${finalizedFilter("t")}
-        ${query.seriesId ? Prisma.sql`AND t."seriesId" = ${query.seriesId}` : Prisma.empty}
-      GROUP BY t."seriesId", s."name", t."projectId", p."episodeNumber", p."episodeTitle", p."name", t."userId", u."email", u."name", t."provider", t."model"
-      ORDER BY t."seriesId", p."episodeNumber" NULLS LAST, total DESC
+        ${query.seriesId ? Prisma.sql`AND COALESCE(t."seriesId", cp."seriesId") = ${query.seriesId}` : Prisma.empty}
+      GROUP BY COALESCE(t."seriesId", cp."seriesId"), s."name", p."id", p."episodeNumber", p."episodeTitle", p."name", cp."id", cp."name", t."userId", u."email", u."name", t."provider", t."model"
+      ORDER BY COALESCE(t."seriesId", cp."seriesId"), p."episodeNumber" NULLS LAST, "sourceType", total DESC
       LIMIT 1000
     `);
     return rows;
@@ -482,21 +488,23 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
       }[]
     >(Prisma.sql`
       SELECT s."name" AS "seriesName",
-             t."seriesId",
+             COALESCE(t."seriesId", cp."seriesId") AS "seriesId",
              t."provider",
              t."model",
-             COUNT(DISTINCT t."projectId")::bigint AS "episodeCount",
+             COUNT(DISTINCT p."id")::bigint AS "episodeCount",
              COUNT(DISTINCT t."userId")::bigint AS "userCount",
              SUM(t."totalTokens") AS total,
              COUNT(*)::bigint AS count
       FROM "TokenUsageLog" t
-      LEFT JOIN "Series" s ON s."id" = t."seriesId"
+      LEFT JOIN "CanvasProject" cp ON cp."id" = COALESCE(t."canvasProjectId", CASE WHEN t."requestType" LIKE 'canvas%' THEN t."projectId" END)
+      LEFT JOIN "Project" p ON p."id" = t."projectId"
+      LEFT JOIN "Series" s ON s."id" = COALESCE(t."seriesId", cp."seriesId")
       WHERE t."createdAt" >= ${fromDate}
         AND t."createdAt" < ${toDate}
-        AND t."seriesId" IS NOT NULL
+        AND COALESCE(t."seriesId", cp."seriesId") IS NOT NULL
         ${finalizedFilter("t")}
-        ${query.seriesId ? Prisma.sql`AND t."seriesId" = ${query.seriesId}` : Prisma.empty}
-      GROUP BY s."name", t."seriesId", t."provider", t."model"
+        ${query.seriesId ? Prisma.sql`AND COALESCE(t."seriesId", cp."seriesId") = ${query.seriesId}` : Prisma.empty}
+      GROUP BY s."name", COALESCE(t."seriesId", cp."seriesId"), t."provider", t."model"
       ORDER BY s."name" NULLS LAST, total DESC
     `);
 
@@ -505,6 +513,7 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
         seriesName: string | null;
         episodeNumber: number | null;
         episodeName: string | null;
+        sourceType: string;
         userEmail: string;
         userName: string | null;
         provider: string;
@@ -515,7 +524,8 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
     >(Prisma.sql`
       SELECT s."name" AS "seriesName",
              p."episodeNumber" AS "episodeNumber",
-             COALESCE(p."episodeTitle", p."name") AS "episodeName",
+             CASE WHEN cp."id" IS NOT NULL THEN cp."name" ELSE COALESCE(p."episodeTitle", p."name") END AS "episodeName",
+             CASE WHEN cp."id" IS NOT NULL THEN 'canvas' ELSE 'episode' END AS "sourceType",
              u."email" AS "userEmail",
              u."name" AS "userName",
              t."provider",
@@ -523,16 +533,17 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
              SUM(t."totalTokens") AS total,
              COUNT(*)::bigint AS count
       FROM "TokenUsageLog" t
-      LEFT JOIN "Series" s ON s."id" = t."seriesId"
+      LEFT JOIN "CanvasProject" cp ON cp."id" = COALESCE(t."canvasProjectId", CASE WHEN t."requestType" LIKE 'canvas%' THEN t."projectId" END)
       LEFT JOIN "Project" p ON p."id" = t."projectId"
+      LEFT JOIN "Series" s ON s."id" = COALESCE(t."seriesId", cp."seriesId")
       LEFT JOIN "User" u ON u."id" = t."userId"
       WHERE t."createdAt" >= ${fromDate}
         AND t."createdAt" < ${toDate}
-        AND t."seriesId" IS NOT NULL
+        AND COALESCE(t."seriesId", cp."seriesId") IS NOT NULL
         ${finalizedFilter("t")}
-        ${query.seriesId ? Prisma.sql`AND t."seriesId" = ${query.seriesId}` : Prisma.empty}
-      GROUP BY s."name", p."episodeNumber", p."episodeTitle", p."name", u."email", u."name", t."provider", t."model"
-      ORDER BY s."name" NULLS LAST, p."episodeNumber" NULLS LAST, total DESC
+        ${query.seriesId ? Prisma.sql`AND COALESCE(t."seriesId", cp."seriesId") = ${query.seriesId}` : Prisma.empty}
+      GROUP BY s."name", p."episodeNumber", p."episodeTitle", p."name", cp."id", cp."name", u."email", u."name", t."provider", t."model"
+      ORDER BY s."name" NULLS LAST, p."episodeNumber" NULLS LAST, "sourceType", total DESC
     `);
 
     const seriesHeader = "Series,Provider,模型,集数数,用户数,总Token,调用次数";
@@ -556,7 +567,9 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
     const breakdownCsv = breakdownRows
       .map((r) => {
         const epNum = r.episodeNumber ? `第${r.episodeNumber}集` : "—";
-        const ep = r.episodeName ? `${epNum} · ${r.episodeName}` : epNum;
+        const ep = r.sourceType === "canvas"
+          ? `画布 · ${r.episodeName ?? "未命名画布"}`
+          : (r.episodeName ? `${epNum} · ${r.episodeName}` : epNum);
         return [
           r.seriesName ?? "—",
           ep,

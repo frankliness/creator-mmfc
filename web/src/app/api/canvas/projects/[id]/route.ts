@@ -6,7 +6,7 @@ import { logUserAction } from "@/lib/user-action-logger";
 import { getMembership } from "@/lib/series-membership";
 
 const patchSchema = z.object({
-  name: z.string().min(1).max(120).optional(),
+  name: z.string().trim().min(1).max(120).optional(),
   thumbnail: z.string().optional(),
   viewport: z
     .object({ x: z.number(), y: z.number(), zoom: z.number() })
@@ -34,6 +34,25 @@ async function loadAccessible(id: string, userId: string) {
     if (m && m.status === "ACTIVE") return cp;
   }
   return null;
+}
+
+async function findDuplicateCanvasName(args: {
+  id: string;
+  name: string;
+  userId: string;
+  seriesId: string | null;
+}) {
+  return prisma.canvasProject.findFirst({
+    where: {
+      id: { not: args.id },
+      name: args.name,
+      status: { not: "DELETED" },
+      ...(args.seriesId
+        ? { seriesId: args.seriesId }
+        : { userId: args.userId, seriesId: null }),
+    },
+    select: { id: true },
+  });
 }
 
 export async function GET(
@@ -133,6 +152,25 @@ export async function PATCH(
       if (!newM || newM.role === "VIEWER") {
         return NextResponse.json({ error: "需要新 Series 的 OWNER/PRODUCER" }, { status: 403 });
       }
+    }
+  }
+
+  if ("name" in data || "seriesId" in data) {
+    const targetName = (data.name as string | undefined) ?? existing.name;
+    const targetSeriesId = "seriesId" in data
+      ? (data.seriesId as string | null)
+      : existing.seriesId;
+    const duplicate = await findDuplicateCanvasName({
+      id,
+      name: targetName,
+      userId: existing.userId,
+      seriesId: targetSeriesId,
+    });
+    if (duplicate) {
+      return NextResponse.json(
+        { error: "画布名称已存在，请换一个名称", code: "CANVAS_NAME_DUPLICATE" },
+        { status: 409 },
+      );
     }
   }
 

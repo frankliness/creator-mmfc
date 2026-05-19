@@ -6,10 +6,27 @@ import { logUserAction } from "@/lib/user-action-logger";
 import { getMembership } from "@/lib/series-membership";
 
 const createSchema = z.object({
-  name: z.string().min(1).max(120),
+  name: z.string().trim().min(1).max(120),
   /** v1.9.0：可选绑定到一个 Series（必须是该 Series 的 OWNER / PRODUCER） */
   seriesId: z.string().optional().nullable(),
 });
+
+async function findDuplicateCanvasName(args: {
+  name: string;
+  userId: string;
+  seriesId: string | null;
+}) {
+  return prisma.canvasProject.findFirst({
+    where: {
+      name: args.name,
+      status: { not: "DELETED" },
+      ...(args.seriesId
+        ? { seriesId: args.seriesId }
+        : { userId: args.userId, seriesId: null }),
+    },
+    select: { id: true },
+  });
+}
 
 export async function GET() {
   const auth = await requireCanvasUser();
@@ -64,6 +81,18 @@ export async function POST(req: NextRequest) {
     const m = await getMembership(auth.user.id, parsed.data.seriesId);
     if (!m) return NextResponse.json({ error: "你不是该 Series 的成员", code: "NOT_A_MEMBER" }, { status: 403 });
     if (m.role === "VIEWER") return NextResponse.json({ error: "VIEWER 不可创建", code: "READ_ONLY" }, { status: 403 });
+  }
+
+  const duplicate = await findDuplicateCanvasName({
+    name: parsed.data.name,
+    userId: auth.user.id,
+    seriesId: parsed.data.seriesId ?? null,
+  });
+  if (duplicate) {
+    return NextResponse.json(
+      { error: "画布名称已存在，请换一个名称", code: "CANVAS_NAME_DUPLICATE" },
+      { status: 409 },
+    );
   }
 
   const created = await prisma.canvasProject.create({

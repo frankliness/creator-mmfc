@@ -35,6 +35,7 @@ export interface CanvasCallLogParams {
   upstreamProvider?: string;
   /** 实际分发到的渠道凭据 id；渠道维度看板按此字段聚合 */
   credentialId?: string | null;
+  canvasImageTaskId?: string | null;
 }
 
 /**
@@ -105,8 +106,10 @@ export async function logCanvasCall(params: CanvasCallLogParams): Promise<void> 
   if (params.status === "success") {
     await logTokenUsage({
       userId: params.userId,
-      projectId: params.projectId ?? undefined,
+      projectId: undefined,
       seriesId: params.seriesId ?? null,
+      canvasProjectId: params.projectId ?? null,
+      canvasImageTaskId: params.canvasImageTaskId ?? null,
       provider: tokenLogProvider,
       model: params.model,
       requestType: params.callType,

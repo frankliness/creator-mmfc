@@ -1,6 +1,6 @@
 # Creator MMFC
 
-**版本：1.10.1**
+**版本：1.10.2**
 
 面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，可选 **GCS** 做对象存储。
 
@@ -64,6 +64,39 @@
 - OWNER buffer 调配（buffer ↔ 集数双向）、集数锁定 / 解锁
 - 新建画布弹窗可绑定 Series；画布生图调用从 Series 预算池扣减
 - 画布快照乐观锁互踢提示、画布文字节点拖拽缩放
+
+---
+
+### 版本 1.10.2 更新摘要
+
+**主要特性：Canvas Token 统计补漏 + 画布命名查重**
+
+#### 1. Admin Token 统计补齐 Series Canvas 消耗
+
+- 「按项目维度」tab 的 ①「按 Series 汇总」和 ②「集数/画布 × 用户明细」兼容两类 Canvas token 行：
+  - 新口径：`TokenUsageLog.canvasProjectId = CanvasProject.id`
+  - 旧口径：`TokenUsageLog.projectId = CanvasProject.id`
+- Series 归属使用 `COALESCE(TokenUsageLog.seriesId, CanvasProject.seriesId)`，避免旧 Canvas token 行因缺 `seriesId` 被漏统
+- ② 明细把 Canvas 显示为 `画布 · 名称 · 短ID`，同名画布可区分；同一画布同一用户同一模型合并展示，不再按 `canvas_image` / `canvas_image_edit` 拆行
+- 「按项目维度」CSV 导出同步使用同一口径
+
+#### 2. Canvas Token 写入字段归正
+
+- Canvas 成功调用写入 `TokenUsageLog` 时，画布 ID 写入 `canvasProjectId`，图片任务 ID 写入 `canvasImageTaskId`
+- `projectId` 保留给集数 `Project.id`，避免后续报表把 CanvasProject 当 Episode join
+- 写入侧继续透传 `seriesId` 与真实上游 provider；历史 `provider=gemini-canvas` 行不自动改写，仍可按 `metadata.upstreamProvider` 追溯
+
+#### 3. 历史数据回填
+
+- 已对可明确归属的历史 Canvas token 行回填 `seriesId`：`TokenUsageLog.projectId = CanvasProject.id AND CanvasProject.seriesId IS NOT NULL`
+- legacy / 未绑定 Series 的历史画布不自动归入 Series，避免错误归属
+
+#### 4. 画布命名查重
+
+- 新建画布和重命名 / 改归属时均做服务端查重
+- Series 画布：同一 `seriesId` 下非 `DELETED` 画布不允许重名
+- legacy 个人画布：同一用户、`seriesId IS NULL` 下非 `DELETED` 画布不允许重名
+- 名称入库前会 `trim`，历史已有重名不自动处理
 
 ---
 
