@@ -238,7 +238,11 @@ const seriesColumns = [
 
 const breakdownColumns = [
   { title: "Series", dataIndex: "seriesName", ellipsis: true, customRender: ({ text, record }: any) => text || record.seriesId || '—' },
-  { title: "集数", key: "episode", customRender: ({ record }: any) => {
+  { title: "集数/画布", key: "episode", customRender: ({ record }: any) => {
+    if (record.sourceType === 'canvas') {
+      const id = record.projectId ? String(record.projectId).slice(0, 8) : '';
+      return `画布 · ${record.episodeName || '未命名画布'}${id ? ` · ${id}` : ''}`;
+    }
     const num = record.episodeNumber ? `第${record.episodeNumber}集` : '—';
     return record.episodeName ? `${num} · ${record.episodeName}` : num;
   } },

@@ -328,6 +328,7 @@ export async function runImageTask(taskId: string): Promise<{
       quality: task.quality ?? undefined,
       upstreamProvider: imageConfig.provider,
       credentialId: task.credentialId,
+      canvasImageTaskId: task.id,
     });
 
     await logUserAction({

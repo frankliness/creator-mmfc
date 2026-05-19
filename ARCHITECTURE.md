@@ -1,6 +1,6 @@
 # Creator MMFC 架构文档
 
-> 更新日期：2026-05-17（v1.9.0）
+> 更新日期：2026-05-19（v1.10.2）
 > 适用范围：当前仓库 `creator_mmfc`
 > 文档目标：面向开发、运维、二次改造人员，说明系统边界、代码结构、运行时数据流、核心模型、部署方式与主要设计取舍。
 
@@ -654,13 +654,14 @@ Series 成员关系。
 
 - 用户维度统计
 - provider/model 维度统计（v1.10.1：canvas 类调用 `provider` 改记真实上游，不再硬编码 `gemini-canvas`）
-- Series / 集数 / 用户多维度报表（v1.10.1：canvas 写入侧补 `seriesId`，「按项目维度」tab 才能聚合 canvas 真实 token）
-- 管理后台趋势图、按 Series 模型分布、CSV 导出（v1.10.1 拓展）
+- Series / 集数 / 用户多维度报表（v1.10.2：Canvas token 行使用 `COALESCE(TokenUsageLog.seriesId, CanvasProject.seriesId)` 补齐旧数据归属；Canvas 明细按同一画布、同一用户、同一模型聚合）
+- 管理后台趋势图、按 Series 模型分布、CSV 导出（v1.10.2：按项目维度 CSV 与页面使用同一 Canvas 归属口径）
 
-关键字段语义（v1.9.0 / v1.10.1）：
+关键字段语义（v1.9.0 / v1.10.1 / v1.10.2）：
 
 - `status`：`FINALIZED`（已结算，进报表）/ `RESERVED`（预扣中，seedance 任务进行中）/ `RELEASED`（失败放走）。报表只读 `FINALIZED`
 - `metricType`：`TOKEN`（token 配额）/ `SUCCESS_COUNT`（次数配额，canvas 图片成功扣减预算用）/ `NULL`（legacy）。报表只读 `NULL` 或 `TOKEN`，`SUCCESS_COUNT` 行是预算占位、token=0 不应进 token 报表
+- `canvasProjectId / canvasImageTaskId`（v1.10.2）：Canvas 成功调用写入 TokenUsageLog 时使用这两个字段承载画布项目与图片任务 ID；`projectId` 继续保留给 Episode `Project.id`
 - 上述两条由 admin `/token-usage/*` 路由统一的 `finalizedFilter()` 过滤实现，确保报表口径一致
 
 #### `UserActionLog`
@@ -687,6 +688,7 @@ Series 成员关系。
 - `status`
 - v1.9.0：`seriesId?`——绑定 Series（legacy 项目为 null，走旧配额；Series 项目走预算池）
 - v1.9.0：`version Int @default(1)`——乐观锁版本号；客户端 autosave 提交 `baseVersion`，服务端事务内 `FOR UPDATE` 比对，stale 即返 `409 STALE_BASE_VERSION`
+- v1.10.2：创建、重命名、改归属时做服务端名称查重。Series 画布在同一 `seriesId` 下非 `DELETED` 不允许重名；legacy 个人画布在同一用户的 `seriesId IS NULL` 范围内不允许重名。历史重名数据保留不回写。
 
 状态：
 
