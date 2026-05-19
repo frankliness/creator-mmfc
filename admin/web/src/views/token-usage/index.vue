@@ -72,6 +72,7 @@
           </a-select>
           <a-button type="primary" @click="fetchProject">查询</a-button>
           <a-button @click="resetProjFilters">重置</a-button>
+          <a-button :loading="projExportLoading" @click="handleProjExport">导出</a-button>
         </a-space>
 
         <a-card title="① 按 Series 汇总" size="small" style="margin-bottom: 16px">
@@ -90,7 +91,7 @@
           <a-table
             :columns="breakdownColumns"
             :data-source="seriesBreakdownData"
-            :row-key="(r: any) => `${r.seriesId}-${r.projectId}-${r.userId}-${r.provider}`"
+            :row-key="(r: any) => `${r.seriesId}-${r.projectId}-${r.userId}-${r.provider}-${r.model}`"
             size="small"
             :pagination="{ pageSize: 30 }"
           />
@@ -100,7 +101,7 @@
           <a-table
             :columns="projColumns"
             :data-source="byProjectData"
-            :row-key="(r: any) => `${r.projectId}-${r.userEmail}`"
+            :row-key="(r: any) => `${r.projectId}-${r.userEmail}-${r.provider}-${r.model}`"
             size="small"
             :pagination="{ pageSize: 20 }"
           />
@@ -153,10 +154,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from "vue";
+import { h, ref, onMounted, nextTick } from "vue";
 import dayjs from "dayjs";
 import { message } from "ant-design-vue";
-import { exportTokenUsage, exportTokenUsageByUser, getSummary, getByUser, getByProvider, getCanvasByUser, getCanvasByProject, getCanvasByModel, getByProject, getBySeries, getBySeriesBreakdown } from "@/api/token-usage";
+import { exportTokenUsage, exportTokenUsageByUser, exportByProject, getSummary, getByUser, getByProvider, getCanvasByUser, getCanvasByProject, getCanvasByModel, getByProject, getBySeries, getBySeriesBreakdown } from "@/api/token-usage";
 import * as echarts from "echarts";
 
 const activeTab = ref("all");
@@ -183,6 +184,7 @@ const seriesBreakdownData = ref<any[]>([]);
 const selectedSeriesId = ref<string | undefined>(undefined);
 const projRange = ref("30");
 const projDateRange = ref<string[]>([]);
+const projExportLoading = ref(false);
 
 const userColumns = [
   { title: "排名", customRender: ({ index }: any) => index + 1, width: 60 },
@@ -216,10 +218,22 @@ const canvasModelColumns = [
 
 const seriesColumns = [
   { title: "Series", dataIndex: "seriesName", ellipsis: true, customRender: ({ text, record }: any) => text || record.seriesId || '(无 Series)' },
-  { title: "集数数", dataIndex: "episodeCount" },
-  { title: "用户数", dataIndex: "userCount" },
-  { title: "总 Token", dataIndex: "total", customRender: ({ text }: any) => Number(text).toLocaleString() },
-  { title: "调用次数", dataIndex: "count" },
+  { title: "集数数", dataIndex: "episodeCount", width: 80 },
+  { title: "用户数", dataIndex: "userCount", width: 80 },
+  { title: "总 Token", dataIndex: "total", width: 120, customRender: ({ text }: any) => Number(text).toLocaleString() },
+  { title: "调用次数", dataIndex: "count", width: 90 },
+  {
+    title: "模型分布",
+    dataIndex: "modelBreakdown",
+    customRender: ({ text }: any) => {
+      const list = Array.isArray(text) ? text : [];
+      if (list.length === 0) return '—';
+      const lines = list.map((m: any) =>
+        `${m.provider}/${m.model}: ${Number(m.total).toLocaleString()} / ${m.count}次`
+      ).join('\n');
+      return h('div', { style: 'white-space: pre-line; font-size: 12px; line-height: 1.6' }, lines);
+    },
+  },
 ];
 
 const breakdownColumns = [
@@ -230,6 +244,7 @@ const breakdownColumns = [
   } },
   { title: "用户", key: "user", customRender: ({ record }: any) => record.userName ? `${record.userName} (${record.userEmail})` : record.userEmail },
   { title: "Provider", dataIndex: "provider", width: 110 },
+  { title: "模型", dataIndex: "model", ellipsis: true, width: 200 },
   { title: "总 Token", dataIndex: "total", customRender: ({ text }: any) => Number(text).toLocaleString() },
   { title: "调用次数", dataIndex: "count" },
 ];
@@ -238,6 +253,8 @@ const projColumns = [
   { title: "Series", dataIndex: "seriesName", ellipsis: true, customRender: ({ text }: any) => text || '—' },
   { title: "集数/项目", dataIndex: "projectName", ellipsis: true, customRender: ({ text, record }: any) => text || record.projectId || '—' },
   { title: "用户", key: "user", customRender: ({ record }: any) => record.userName ? `${record.userName} (${record.userEmail})` : record.userEmail },
+  { title: "Provider", dataIndex: "provider", width: 110 },
+  { title: "模型", dataIndex: "model", ellipsis: true, width: 200 },
   { title: "总 Token", dataIndex: "total", customRender: ({ text }: any) => Number(text).toLocaleString() },
   { title: "调用次数", dataIndex: "count" },
 ];
@@ -382,6 +399,22 @@ async function fetchProject() {
 function onSelectSeries(seriesId: string) {
   selectedSeriesId.value = selectedSeriesId.value === seriesId ? undefined : seriesId;
   fetchProject();
+}
+
+async function handleProjExport() {
+  projExportLoading.value = true;
+  try {
+    const params = {
+      ...(buildDateRangeParams(projDateRange.value) ?? buildRangeParams(projRange.value)),
+      ...(selectedSeriesId.value ? { seriesId: selectedSeriesId.value } : {}),
+    };
+    const blob = await exportByProject(params);
+    const file = blob instanceof Blob ? blob : new Blob([blob], { type: "text/csv;charset=utf-8" });
+    downloadBlob(file, `token-usage-by-project-${dayjs().format("YYYYMMDD-HHmmss")}.csv`);
+    message.success("导出成功");
+  } finally {
+    projExportLoading.value = false;
+  }
 }
 
 function resetProjFilters() {

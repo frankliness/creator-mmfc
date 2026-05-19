@@ -137,8 +137,13 @@ export async function canvasProjectRoutes(app: FastifyInstance) {
 
     await prisma.$transaction([
       prisma.canvasAiCall.deleteMany({ where: { projectId: id } }),
+      // v1.10：canvas TokenUsageLog 的 provider 现在记真实上游（azure_openai/openai/google），
+      // 不能再按 provider="gemini-canvas" 过滤；改用 requestType 锁定 canvas 三种调用类型。
       prisma.tokenUsageLog.deleteMany({
-        where: { projectId: id, provider: "gemini-canvas" },
+        where: {
+          projectId: id,
+          requestType: { in: ["canvas_chat", "canvas_image", "canvas_image_edit"] },
+        },
       }),
       prisma.canvasProject.delete({ where: { id } }),
     ]);

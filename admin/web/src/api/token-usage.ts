@@ -30,6 +30,10 @@ export const getBySeries = (params?: Record<string, unknown>) =>
 export const getBySeriesBreakdown = (params?: Record<string, unknown>) =>
   request.get("/token-usage/by-series-breakdown", { params });
 
+/** 导出「按项目维度」CSV（① 按 Series 汇总 + ② 集数 × 用户 明细） */
+export const exportByProject = (params?: Record<string, unknown>) =>
+  request.get<Blob>("/token-usage/export/by-project", { params, responseType: "blob" });
+
 /** AI 画布：CanvasAiCall 聚合 */
 export const getCanvasByUser = (params?: Record<string, unknown>) =>
   request.get("/token-usage/canvas/by-user", { params });

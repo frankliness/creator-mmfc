@@ -1,6 +1,6 @@
 # Creator MMFC
 
-**版本：1.9.1**
+**版本：1.10.1**
 
 面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，可选 **GCS** 做对象存储。
 
@@ -64,6 +64,42 @@
 - OWNER buffer 调配（buffer ↔ 集数双向）、集数锁定 / 解锁
 - 新建画布弹窗可绑定 Series；画布生图调用从 Series 预算池扣减
 - 画布快照乐观锁互踢提示、画布文字节点拖拽缩放
+
+---
+
+### 版本 1.10.1 更新摘要
+
+**主要特性：Admin Token 统计页"按项目维度"重做 + 报表口径统一**
+
+#### 1. 「按项目维度」tab 增强
+
+- ①「按 Series 汇总」新增「模型分布」列：单行展示该 Series 下每个 `provider/model` 的 token 与调用次数
+- ②「集数 × 用户 明细」新增「模型」列，行键从 `(series, project, user, provider)` 细化到 `(... , provider, model)`，看得到具体在用哪个模型
+- ③「全项目（含 legacy）Top 100」补齐「Provider」+「模型」列
+- 新增「导出」按钮：按当前 Series / 日期筛选导出 ① + ② 拼接的单 CSV（UTF-8 BOM、两段标题分隔）
+
+#### 2. 报表口径统一过滤（全站 + 按项目维度）
+
+- 新增 `finalizedFilter()` 工具函数，应用到 `/summary` `/by-user` `/by-provider` `/by-project` `/by-series` `/by-series-breakdown` `/export/*` `/detail` 全部受影响查询
+- 过滤规则：`status='FINALIZED'` AND `(metricType IS NULL OR metricType='TOKEN')`
+- 效果：排除 seedance `RESERVED`（进行中）/ `RELEASED`（失败放走）的占位行；排除 canvas `SUCCESS_COUNT` 这类"次数"配额标记行；只统计真实 token 消耗
+
+#### 3. Canvas TokenUsageLog provider 归因到真实上游
+
+- 改 `web/src/lib/canvas/canvas-logger.ts` 写入 `TokenUsageLog` 时 `provider` 字段直接记真实上游（`azure_openai` / `openai` / `google`），不再硬编码为 `gemini-canvas`
+- 同步修 `admin/.../canvas-projects.routes.ts` 删除 canvas project 时清理 TokenUsageLog 的 WHERE 条件，从 `provider="gemini-canvas"` 改为 `requestType IN ('canvas_chat', 'canvas_image', 'canvas_image_edit')`
+- `CanvasAiCall` 表 provider 仍保留 `gemini-canvas`（画布通道审计语义，不变）
+- 历史数据需跑一次性回填 SQL：`UPDATE "TokenUsageLog" SET provider = metadata->>'upstreamProvider' WHERE provider = 'gemini-canvas' AND metadata->>'upstreamProvider' IS NOT NULL`
+
+#### 4. Canvas 写入侧补 `seriesId`
+
+- `canvas-logger.ts` / `token-logger.ts` 加 `seriesId` 字段；`canvas/chat/route.ts` 与 `image-task-runner.ts` 调用 `logCanvasCall` 时透传 `project.seriesId`
+- 修复"按项目维度"报表里 canvas 真实 token 行（旧 `gemini-canvas` provider）缺 seriesId 无法聚合的问题
+- 老数据需一次性回填：`UPDATE "TokenUsageLog" t SET seriesId = cp."seriesId" FROM "CanvasProject" cp WHERE t."projectId" = cp.id AND t.provider IN (...) AND t."seriesId" IS NULL`
+
+#### 5. 数据库无 schema 变更
+
+仅两条一次性回填 SQL，**TokenUsageLog 表结构不变**。
 
 ---
 

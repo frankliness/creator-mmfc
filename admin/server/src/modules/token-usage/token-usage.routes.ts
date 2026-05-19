@@ -87,6 +87,22 @@ function escapeCsvCell(value: unknown) {
   return `"${text.replace(/"/g, "\"\"")}"`;
 }
 
+/**
+ * 报表口径统一过滤：只统计"真实 token 消耗"行
+ * - status='FINALIZED'：排除 seedance RESERVED（进行中）/ RELEASED（失败放走）的占位
+ * - metricType IS NULL OR ='TOKEN'：排除 canvas SUCCESS_COUNT 这类按"次数"配额的占位行
+ * 老数据 status 默认 'FINALIZED'、metricType 为 NULL，自动通过。
+ *
+ * 调用方传别名前缀（如 `t` → `t.`），或传 `"TokenUsageLog"` → 双引号包裹的表名。
+ */
+function finalizedFilter(prefix: string) {
+  const p = Prisma.raw(prefix);
+  return Prisma.sql`
+    AND ${p}."status" = 'FINALIZED'
+    AND (${p}."metricType" IS NULL OR ${p}."metricType" = 'TOKEN')
+  `;
+}
+
 export async function tokenUsageRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requirePermission("tokenUsage", "read"));
 
@@ -109,6 +125,7 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
       FROM "TokenUsageLog"
       WHERE "createdAt" >= ${fromDate}
         AND "createdAt" < ${toDate}
+        ${finalizedFilter(`"TokenUsageLog"`)}
         ${query.userId ? Prisma.sql`AND "userId" = ${query.userId}` : Prisma.empty}
         ${buildUserEmailExistsFilter(query)}
         ${query.projectId ? Prisma.sql`AND "projectId" = ${query.projectId}` : Prisma.empty}
@@ -139,6 +156,7 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
       JOIN "User" u ON t."userId" = u."id"
       WHERE t."createdAt" >= ${fromDate}
         AND t."createdAt" < ${toDate}
+        ${finalizedFilter("t")}
         ${query.userId ? Prisma.sql`AND t."userId" = ${query.userId}` : Prisma.empty}
         ${buildUserEmailFilter(query, "u")}
         ${query.projectId ? Prisma.sql`AND t."projectId" = ${query.projectId}` : Prisma.empty}
@@ -166,6 +184,7 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
       FROM "TokenUsageLog"
       WHERE "createdAt" >= ${fromDate}
         AND "createdAt" < ${toDate}
+        ${finalizedFilter(`"TokenUsageLog"`)}
         ${query.userId ? Prisma.sql`AND "userId" = ${query.userId}` : Prisma.empty}
         ${buildUserEmailExistsFilter(query)}
         ${query.projectId ? Prisma.sql`AND "projectId" = ${query.projectId}` : Prisma.empty}
@@ -190,6 +209,8 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
     if (query.provider) where.provider = query.provider;
     if (query.model) where.model = query.model;
     where.createdAt = { gte: fromDate, lt: toDate };
+    where.status = "FINALIZED";
+    where.OR = [{ metricType: null }, { metricType: "TOKEN" }];
 
     const [data, total] = await Promise.all([
       prisma.tokenUsageLog.findMany({
@@ -216,6 +237,8 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
     if (query.provider) where.provider = query.provider;
     if (query.model) where.model = query.model;
     where.createdAt = { gte: fromDate, lt: toDate };
+    where.status = "FINALIZED";
+    where.OR = [{ metricType: null }, { metricType: "TOKEN" }];
 
     const data = await prisma.tokenUsageLog.findMany({
       where,
@@ -266,6 +289,7 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
       JOIN "User" u ON t."userId" = u."id"
       WHERE t."createdAt" >= ${fromDate}
         AND t."createdAt" < ${toDate}
+        ${finalizedFilter("t")}
         ${query.userId ? Prisma.sql`AND t."userId" = ${query.userId}` : Prisma.empty}
         ${buildUserEmailFilter(query, "u")}
         ${query.projectId ? Prisma.sql`AND t."projectId" = ${query.projectId}` : Prisma.empty}
@@ -297,19 +321,21 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
     return `\uFEFF${csvHeader}${csvRows}`;
   });
 
-  /** 以 Project（集数）为维度 */
+  /** 以 Project（集数）为维度 — 按 (project × user × provider × model) 展开 */
   app.get("/by-project", async (request) => {
     const query = summaryQuerySchema.parse(request.query);
     const { fromDate, toDate } = resolveTimeRange(query);
 
     const rows = await prisma.$queryRaw<
-      { projectId: string; projectName: string | null; userEmail: string; userName: string | null; seriesName: string | null; total: bigint; count: bigint }[]
+      { projectId: string; projectName: string | null; userEmail: string; userName: string | null; seriesName: string | null; provider: string; model: string; total: bigint; count: bigint }[]
     >(Prisma.sql`
       SELECT t."projectId",
              p."name" AS "projectName",
              u."email" AS "userEmail",
              u."name" AS "userName",
              s."name" AS "seriesName",
+             t."provider",
+             t."model",
              SUM(t."totalTokens") AS total,
              COUNT(*)::bigint AS count
       FROM "TokenUsageLog" t
@@ -319,16 +345,17 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
       WHERE t."createdAt" >= ${fromDate}
         AND t."createdAt" < ${toDate}
         AND t."projectId" IS NOT NULL
+        ${finalizedFilter("t")}
         ${query.projectId ? Prisma.sql`AND t."projectId" = ${query.projectId}` : Prisma.empty}
         ${buildUserEmailFilter(query, "u")}
-      GROUP BY t."projectId", p."name", u."email", u."name", s."name"
+      GROUP BY t."projectId", p."name", u."email", u."name", s."name", t."provider", t."model"
       ORDER BY total DESC
       LIMIT 100
     `);
     return rows;
   });
 
-  /** 以 Series 为维度（汇总） */
+  /** 以 Series 为维度（汇总）— 附带 modelBreakdown */
   app.get("/by-series", async (request) => {
     const query = summaryQuerySchema.parse(request.query);
     const { fromDate, toDate } = resolveTimeRange(query);
@@ -347,12 +374,42 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
       WHERE t."createdAt" >= ${fromDate}
         AND t."createdAt" < ${toDate}
         AND t."seriesId" IS NOT NULL
+        ${finalizedFilter("t")}
         ${query.seriesId ? Prisma.sql`AND t."seriesId" = ${query.seriesId}` : Prisma.empty}
       GROUP BY t."seriesId", s."name"
       ORDER BY total DESC
       LIMIT 100
     `);
-    return rows;
+
+    const breakdown = await prisma.$queryRaw<
+      { seriesId: string; provider: string; model: string; total: bigint; count: bigint }[]
+    >(Prisma.sql`
+      SELECT t."seriesId",
+             t."provider",
+             t."model",
+             SUM(t."totalTokens") AS total,
+             COUNT(*)::bigint AS count
+      FROM "TokenUsageLog" t
+      WHERE t."createdAt" >= ${fromDate}
+        AND t."createdAt" < ${toDate}
+        AND t."seriesId" IS NOT NULL
+        ${finalizedFilter("t")}
+        ${query.seriesId ? Prisma.sql`AND t."seriesId" = ${query.seriesId}` : Prisma.empty}
+      GROUP BY t."seriesId", t."provider", t."model"
+      ORDER BY total DESC
+    `);
+
+    const breakdownBySeries = new Map<string, { provider: string; model: string; total: bigint; count: bigint }[]>();
+    for (const b of breakdown) {
+      const list = breakdownBySeries.get(b.seriesId) ?? [];
+      list.push({ provider: b.provider, model: b.model, total: b.total, count: b.count });
+      breakdownBySeries.set(b.seriesId, list);
+    }
+
+    return rows.map((r) => ({
+      ...r,
+      modelBreakdown: r.seriesId ? breakdownBySeries.get(r.seriesId) ?? [] : [],
+    }));
   });
 
   /**
@@ -374,6 +431,7 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
         userEmail: string;
         userName: string | null;
         provider: string;
+        model: string;
         total: bigint;
         count: bigint;
       }[]
@@ -387,6 +445,7 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
              u."email" AS "userEmail",
              u."name" AS "userName",
              t."provider",
+             t."model",
              SUM(t."totalTokens") AS total,
              COUNT(*)::bigint AS count
       FROM "TokenUsageLog" t
@@ -396,12 +455,126 @@ export async function tokenUsageRoutes(app: FastifyInstance) {
       WHERE t."createdAt" >= ${fromDate}
         AND t."createdAt" < ${toDate}
         AND t."seriesId" IS NOT NULL
+        ${finalizedFilter("t")}
         ${query.seriesId ? Prisma.sql`AND t."seriesId" = ${query.seriesId}` : Prisma.empty}
-      GROUP BY t."seriesId", s."name", t."projectId", p."episodeNumber", p."episodeTitle", p."name", t."userId", u."email", u."name", t."provider"
+      GROUP BY t."seriesId", s."name", t."projectId", p."episodeNumber", p."episodeTitle", p."name", t."userId", u."email", u."name", t."provider", t."model"
       ORDER BY t."seriesId", p."episodeNumber" NULLS LAST, total DESC
-      LIMIT 500
+      LIMIT 1000
     `);
     return rows;
+  });
+
+  /** 导出「按项目维度」: ① Series×model 汇总 + ② 集数×用户×model 明细，拼接为单 CSV */
+  app.get("/export/by-project", async (request, reply) => {
+    const query = summaryQuerySchema.parse(request.query);
+    const { fromDate, toDate } = resolveTimeRange(query);
+
+    const seriesRows = await prisma.$queryRaw<
+      {
+        seriesName: string | null;
+        seriesId: string;
+        provider: string;
+        model: string;
+        episodeCount: bigint;
+        userCount: bigint;
+        total: bigint;
+        count: bigint;
+      }[]
+    >(Prisma.sql`
+      SELECT s."name" AS "seriesName",
+             t."seriesId",
+             t."provider",
+             t."model",
+             COUNT(DISTINCT t."projectId")::bigint AS "episodeCount",
+             COUNT(DISTINCT t."userId")::bigint AS "userCount",
+             SUM(t."totalTokens") AS total,
+             COUNT(*)::bigint AS count
+      FROM "TokenUsageLog" t
+      LEFT JOIN "Series" s ON s."id" = t."seriesId"
+      WHERE t."createdAt" >= ${fromDate}
+        AND t."createdAt" < ${toDate}
+        AND t."seriesId" IS NOT NULL
+        ${finalizedFilter("t")}
+        ${query.seriesId ? Prisma.sql`AND t."seriesId" = ${query.seriesId}` : Prisma.empty}
+      GROUP BY s."name", t."seriesId", t."provider", t."model"
+      ORDER BY s."name" NULLS LAST, total DESC
+    `);
+
+    const breakdownRows = await prisma.$queryRaw<
+      {
+        seriesName: string | null;
+        episodeNumber: number | null;
+        episodeName: string | null;
+        userEmail: string;
+        userName: string | null;
+        provider: string;
+        model: string;
+        total: bigint;
+        count: bigint;
+      }[]
+    >(Prisma.sql`
+      SELECT s."name" AS "seriesName",
+             p."episodeNumber" AS "episodeNumber",
+             COALESCE(p."episodeTitle", p."name") AS "episodeName",
+             u."email" AS "userEmail",
+             u."name" AS "userName",
+             t."provider",
+             t."model",
+             SUM(t."totalTokens") AS total,
+             COUNT(*)::bigint AS count
+      FROM "TokenUsageLog" t
+      LEFT JOIN "Series" s ON s."id" = t."seriesId"
+      LEFT JOIN "Project" p ON p."id" = t."projectId"
+      LEFT JOIN "User" u ON u."id" = t."userId"
+      WHERE t."createdAt" >= ${fromDate}
+        AND t."createdAt" < ${toDate}
+        AND t."seriesId" IS NOT NULL
+        ${finalizedFilter("t")}
+        ${query.seriesId ? Prisma.sql`AND t."seriesId" = ${query.seriesId}` : Prisma.empty}
+      GROUP BY s."name", p."episodeNumber", p."episodeTitle", p."name", u."email", u."name", t."provider", t."model"
+      ORDER BY s."name" NULLS LAST, p."episodeNumber" NULLS LAST, total DESC
+    `);
+
+    const seriesHeader = "Series,Provider,模型,集数数,用户数,总Token,调用次数";
+    const seriesCsv = seriesRows
+      .map((r) =>
+        [
+          r.seriesName ?? r.seriesId,
+          r.provider,
+          r.model,
+          r.episodeCount.toString(),
+          r.userCount.toString(),
+          r.total.toString(),
+          r.count.toString(),
+        ]
+          .map(escapeCsvCell)
+          .join(",")
+      )
+      .join("\n");
+
+    const breakdownHeader = "Series,集数,用户邮箱,用户名,Provider,模型,总Token,调用次数";
+    const breakdownCsv = breakdownRows
+      .map((r) => {
+        const epNum = r.episodeNumber ? `第${r.episodeNumber}集` : "—";
+        const ep = r.episodeName ? `${epNum} · ${r.episodeName}` : epNum;
+        return [
+          r.seriesName ?? "—",
+          ep,
+          r.userEmail,
+          r.userName ?? "",
+          r.provider,
+          r.model,
+          r.total.toString(),
+          r.count.toString(),
+        ]
+          .map(escapeCsvCell)
+          .join(",");
+      })
+      .join("\n");
+
+    reply.header("Content-Type", "text/csv; charset=utf-8");
+    reply.header("Content-Disposition", "attachment; filename=token-usage-by-project.csv");
+    return `﻿==== 按 Series 汇总 ====\n${seriesHeader}\n${seriesCsv}\n\n==== 集数 × 用户 明细 ====\n${breakdownHeader}\n${breakdownCsv}\n`;
   });
 
   app.get("/canvas/by-user", async (request) => {

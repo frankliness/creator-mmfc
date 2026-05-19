@@ -255,12 +255,13 @@ export async function runImageTask(taskId: string): Promise<{
       },
     });
 
+    const canvasProject = await prisma.canvasProject.findUnique({
+      where: { id: task.projectId },
+      select: { seriesId: true },
+    });
+
     // v1.9.0：Series Canvas 预算 committedUsage += 1（仅成功路径）
     try {
-      const canvasProject = await prisma.canvasProject.findUnique({
-        where: { id: task.projectId },
-        select: { seriesId: true },
-      });
       if (canvasProject?.seriesId) {
         const budget = await findBudget(prisma, {
           seriesId: canvasProject.seriesId,
@@ -314,6 +315,7 @@ export async function runImageTask(taskId: string): Promise<{
     await logCanvasCall({
       userId: task.userId,
       projectId: task.projectId,
+      seriesId: canvasProject?.seriesId ?? null,
       callType: task.callType as "canvas_image" | "canvas_image_edit",
       model: task.model,
       inputTokens: result.usage?.inputTokens ?? BigInt(0),

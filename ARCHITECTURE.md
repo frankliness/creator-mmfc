@@ -192,7 +192,7 @@ web/
 │   └── canvas/                       # Canvas 专属能力
 │       ├── canvas-storage.ts
 │       ├── canvas-quota.ts
-│       ├── canvas-logger.ts          # CanvasAiCall + TokenUsageLog 双写
+│       ├── canvas-logger.ts          # CanvasAiCall + TokenUsageLog 双写；v1.10.1：TokenUsageLog.provider 改记真实上游
 │       └── image-task-runner.ts      # v1.4.0：runImageTask(taskId) — provider 调用 + 落盘 + 审计
 ├── src/worker/
 │   ├── index.ts                      # 主循环（视频任务 + 画布图任务双 loop）
@@ -648,13 +648,20 @@ Series 成员关系。
 
 #### `TokenUsageLog`
 
-记录 Gemini / Seedance 相关 token 消耗。
+记录 Gemini / Seedance / Canvas（OpenAI / Azure OpenAI / Google）相关 token 消耗。
 
 用途：
 
 - 用户维度统计
-- provider/model 维度统计
-- 管理后台趋势图和 CSV 导出
+- provider/model 维度统计（v1.10.1：canvas 类调用 `provider` 改记真实上游，不再硬编码 `gemini-canvas`）
+- Series / 集数 / 用户多维度报表（v1.10.1：canvas 写入侧补 `seriesId`，「按项目维度」tab 才能聚合 canvas 真实 token）
+- 管理后台趋势图、按 Series 模型分布、CSV 导出（v1.10.1 拓展）
+
+关键字段语义（v1.9.0 / v1.10.1）：
+
+- `status`：`FINALIZED`（已结算，进报表）/ `RESERVED`（预扣中，seedance 任务进行中）/ `RELEASED`（失败放走）。报表只读 `FINALIZED`
+- `metricType`：`TOKEN`（token 配额）/ `SUCCESS_COUNT`（次数配额，canvas 图片成功扣减预算用）/ `NULL`（legacy）。报表只读 `NULL` 或 `TOKEN`，`SUCCESS_COUNT` 行是预算占位、token=0 不应进 token 报表
+- 上述两条由 admin `/token-usage/*` 路由统一的 `finalizedFilter()` 过滤实现，确保报表口径一致
 
 #### `UserActionLog`
 

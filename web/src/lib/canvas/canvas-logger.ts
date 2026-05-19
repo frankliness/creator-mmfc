@@ -16,6 +16,8 @@ export type CanvasCallStatus = "success" | "failed" | "rate_limited";
 export interface CanvasCallLogParams {
   userId: string;
   projectId: string | null;
+  /** v1.10：透传至 TokenUsageLog.seriesId，让「按项目维度」报表能聚合到 canvas 真实 token 行。 */
+  seriesId?: string | null;
   callType: CanvasCallType;
   model: string;
   inputTokens?: bigint;
@@ -67,9 +69,11 @@ export async function logCanvasCall(params: CanvasCallLogParams): Promise<void> 
     console.error("[canvas-logger] cost estimate failed:", err);
   }
 
-  // provider 字段：保持 "gemini-canvas" 作为画布通道的稳定标识，避免破坏旧报表的过滤；
-  // 实际上游 provider 写到 metadata.upstreamProvider 里供深度分析。
+  // v1.10：TokenUsageLog.provider 直接记真实上游（azure_openai / openai / google），
+  // 便于 admin 报表按真实 provider 归因；缺失时回退到 "gemini-canvas" 兼容老逻辑。
+  // CanvasAiCall 表仍保留 "gemini-canvas" 作为画布通道标识，不变。
   const channelProvider = "gemini-canvas";
+  const tokenLogProvider = params.upstreamProvider ?? channelProvider;
 
   try {
     await prisma.canvasAiCall.create({
@@ -102,7 +106,8 @@ export async function logCanvasCall(params: CanvasCallLogParams): Promise<void> 
     await logTokenUsage({
       userId: params.userId,
       projectId: params.projectId ?? undefined,
-      provider: channelProvider,
+      seriesId: params.seriesId ?? null,
+      provider: tokenLogProvider,
       model: params.model,
       requestType: params.callType,
       inputTokens,

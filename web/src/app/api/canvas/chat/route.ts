@@ -259,6 +259,7 @@ export async function POST(req: NextRequest) {
     await logCanvasCall({
       userId: auth.user.id,
       projectId: parsed.data.projectId ?? null,
+      seriesId: project.seriesId,
       callType: "canvas_chat",
       model: parsed.data.model,
       durationMs: Date.now() - startedAt,
@@ -284,6 +285,7 @@ export async function POST(req: NextRequest) {
     await logCanvasCall({
       userId: auth.user.id,
       projectId: parsed.data.projectId ?? null,
+      seriesId: project.seriesId,
       callType: "canvas_chat",
       model: parsed.data.model,
       durationMs: Date.now() - startedAt,
@@ -341,6 +343,7 @@ export async function POST(req: NextRequest) {
         await logCanvasCall({
           userId: auth.user.id,
           projectId: parsed.data.projectId ?? null,
+          seriesId: project.seriesId,
           callType: "canvas_chat",
           model: parsed.data.model,
           inputTokens: usage.inputTokens,

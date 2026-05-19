@@ -4,6 +4,8 @@ interface TokenUsageParams {
   userId: string;
   projectId?: string;
   taskId?: string;
+  /** v1.10：Series 维度报表需要。Canvas 类调用应从 CanvasProject.seriesId 取值传入。 */
+  seriesId?: string | null;
   provider: "seedance" | "gemini" | "gemini-canvas" | string;
   model: string;
   requestType: "storyboard_generation" | "video_generation" | "canvas_chat" | "canvas_image" | "canvas_image_edit" | string;
@@ -22,6 +24,7 @@ export async function logTokenUsage(params: TokenUsageParams) {
         userId: params.userId,
         projectId: params.projectId ?? null,
         taskId: params.taskId ?? null,
+        seriesId: params.seriesId ?? null,
         provider: params.provider,
         model: params.model,
         requestType: params.requestType,
