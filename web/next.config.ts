@@ -7,7 +7,34 @@ const nextConfig: NextConfig = {
     "**/api/projects/**/download-batch/**": [
       "./node_modules/archiver/**/*",
     ],
+    // v2.0.0：这些 Node 库使用动态 require / 平台特定二进制 / 带 README 的子包，
+    // 必须把整个目录打进 standalone 产物（包括平台二进制）
+    "**/api/workspace/series/**/assets/**": [
+      "./node_modules/ali-oss/**/*",
+      "./node_modules/sharp/**/*",
+      "./node_modules/fluent-ffmpeg/**/*",
+      "./node_modules/@ffmpeg-installer/**/*",
+      "./node_modules/@ffprobe-installer/**/*",
+    ],
+    "**/worker/**": [
+      "./node_modules/ali-oss/**/*",
+      "./node_modules/sharp/**/*",
+      "./node_modules/fluent-ffmpeg/**/*",
+      "./node_modules/@ffmpeg-installer/**/*",
+      "./node_modules/@ffprobe-installer/**/*",
+    ],
   },
+  /**
+   * v2.0.0：这些库使用 dynamic require、读 README/package.json、平台二进制：
+   * Turbopack/webpack 都没法静态分析；标记为 server-external 让 Node 运行时直接 require。
+   */
+  serverExternalPackages: [
+    "ali-oss",
+    "sharp",
+    "fluent-ffmpeg",
+    "@ffmpeg-installer/ffmpeg",
+    "@ffprobe-installer/ffprobe",
+  ],
   /**
    * MMFC-canvas SPA 静态产物部署在 public/canvas/，根目录 index.html。
    * Next.js 的 App 路由不得占用 `/canvas`（否则 iframe 会加载到 React 壳而非 Vue SPA）。
