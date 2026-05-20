@@ -17,6 +17,10 @@ import {
   BUDGET_SCOPE_VIDEO,
   METRIC_TOKEN,
 } from "@/lib/series-budget";
+import {
+  resolveStoryboardAssetsForSeedance,
+  StoryboardResolveError,
+} from "@/lib/storyboard-asset-resolver";
 
 export async function POST(
   _req: NextRequest,
@@ -194,15 +198,53 @@ export async function POST(
       });
     }
 
+    // v2.0.0：新链路（generationMode + assetRefs）优先；老数据回退用 seedanceContentItems
+    let contentItems: object[];
+    if (storyboard.generationMode && storyboard.assetRefs) {
+      try {
+        const resolved = await resolveStoryboardAssetsForSeedance(id);
+        contentItems = resolved.contentItems.map((c) => c.payload);
+      } catch (resolveErr) {
+        // 释放预扣
+        if (budgetCtx) {
+          const { releaseTokenUsage, findBudgetById } = await import("@/lib/series-budget");
+          const b = await findBudgetById(prisma, budgetCtx.budgetId);
+          if (b) {
+            await prisma.$transaction(async (tx) => {
+              await releaseTokenUsage(tx, b, budgetCtx!.reservedAmount, {
+                operatorId: session.user!.id,
+                operatorRole: "SYSTEM",
+                projectId: storyboard.project.id,
+                projectAllocationId: budgetCtx!.projectAllocationId,
+                reason: "资产校验失败释放预扣",
+              });
+            });
+          }
+        }
+        if (resolveErr instanceof StoryboardResolveError) {
+          return NextResponse.json(
+            { error: resolveErr.message, code: resolveErr.code },
+            { status: resolveErr.status },
+          );
+        }
+        throw resolveErr;
+      }
+    } else {
+      // legacy 老数据透传
+      contentItems = storyboard.seedanceContentItems as object[];
+    }
+
     let result: Awaited<ReturnType<typeof createSeedanceTask>> | null = null;
     try {
       result = await createSeedanceTask({
         prompt: storyboard.prompt,
-        contentItems: storyboard.seedanceContentItems as object[],
+        contentItems,
         duration: storyboard.duration,
         ratio: storyboard.project.ratio,
         resolution: storyboard.project.resolution,
         seed,
+        // v2.0.0：开启尾帧返回，便于 Worker 自动资产化尾帧
+        returnLastFrame: true,
       }, config);
     } catch (callErr) {
       // 调用失败：释放预扣

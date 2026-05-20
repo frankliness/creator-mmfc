@@ -1,10 +1,12 @@
 import "dotenv/config";
 import { Prisma, PrismaClient } from "@prisma/client";
-import { getTaskStatus } from "../lib/seedance";
+import { getTaskStatus, extractLastFrameUrl } from "../lib/seedance";
 import {
   buildVideoBasename,
   downloadVideo,
   uploadToGCS,
+  persistVideoAsSeriesAsset,
+  persistTailFrameAsSeriesAsset,
 } from "./video-persist";
 import { logTokenUsage } from "../lib/token-logger";
 import { decrypt } from "../lib/crypto";
@@ -38,7 +40,7 @@ async function pollTasks() {
         select: {
           id: true,
           storyboardId: true,
-          project: { select: { id: true, userId: true, seriesId: true } },
+          project: { select: { id: true, userId: true, seriesId: true, episodeNumber: true } },
         },
       },
     },
@@ -168,11 +170,27 @@ async function pollTasks() {
         });
 
         if (result.content?.video_url) {
+          const lastFrameUrl = extractLastFrameUrl(result.raw ?? result);
+          if (lastFrameUrl) {
+            // 先把 lastFrameUrl 落库，便于排查
+            await prisma.generationTask.update({
+              where: { id: task.id },
+              data: { lastFrameUrl },
+            }).catch(() => undefined);
+          }
           persistVideo(
             task.id,
             task.arkTaskId,
             task.storyboard.storyboardId,
-            result.content.video_url
+            result.content.video_url,
+            {
+              seriesId: task.storyboard.project.seriesId,
+              projectId: task.storyboard.project.id,
+              episodeNumber: task.storyboard.project.episodeNumber,
+              userId: task.storyboard.project.userId,
+              storyboardRowId: task.storyboard.id,
+              lastFrameUrl,
+            },
           );
         }
       } else if (result.status === "failed") {
@@ -286,7 +304,15 @@ async function persistVideo(
   taskId: string,
   arkTaskId: string,
   storyboardIdLabel: string,
-  videoUrl: string
+  videoUrl: string,
+  ctx?: {
+    seriesId: string | null;
+    projectId: string;
+    episodeNumber: number | null;
+    userId: string;
+    storyboardRowId: string;
+    lastFrameUrl: string | null;
+  },
 ) {
   try {
     const task = await prisma.generationTask.findUnique({
@@ -344,12 +370,67 @@ async function persistVideo(
       }
     }
 
+    // v2.0.0：Series 项目 → OSS + SeriesAsset + 尾帧资产化
+    let videoAssetId: string | null = null;
+    let tailFrameAssetId: string | null = null;
+    let ossVideoKey: string | null = null;
+    let ossVideoUrl: string | null = null;
+    if (ctx?.seriesId && ctx.episodeNumber != null) {
+      try {
+        const videoAsset = await persistVideoAsSeriesAsset({
+          localVideoPath: localPath,
+          seriesId: ctx.seriesId,
+          projectId: ctx.projectId,
+          storyboardId: ctx.storyboardRowId,
+          generationTaskId: taskId,
+          episodeNumber: ctx.episodeNumber,
+          storyboardCode: storyboardIdLabel,
+          createdBy: ctx.userId,
+        });
+        videoAssetId = videoAsset.assetId;
+        ossVideoKey = videoAsset.ossObjectKey;
+        ossVideoUrl = videoAsset.ossPublicUrl;
+      } catch (e) {
+        console.error(
+          `[worker] OSS video upload + SeriesAsset failed for ${arkTaskId}:`,
+          e instanceof Error ? e.message : e,
+        );
+      }
+
+      try {
+        const tailResult = await persistTailFrameAsSeriesAsset({
+          localVideoPath: localPath,
+          lastFrameUrl: ctx.lastFrameUrl,
+          seriesId: ctx.seriesId,
+          projectId: ctx.projectId,
+          storyboardId: ctx.storyboardRowId,
+          generationTaskId: taskId,
+          episodeNumber: ctx.episodeNumber,
+          storyboardCode: storyboardIdLabel,
+          createdBy: ctx.userId,
+        });
+        if (tailResult) {
+          tailFrameAssetId = tailResult.assetId;
+          console.log(`[worker] tail frame for ${arkTaskId} via ${tailResult.mode}`);
+        }
+      } catch (e) {
+        console.error(
+          `[worker] tail frame assetization failed for ${arkTaskId}:`,
+          e instanceof Error ? e.message : e,
+        );
+      }
+    }
+
     await prisma.generationTask.update({
       where: { id: taskId },
       data: {
         status: "PERSISTED",
         localVideoPath: localPath,
         gcsVideoPath: gcsPath,
+        ossVideoKey,
+        ossVideoUrl,
+        videoAssetId,
+        lastFrameAssetId: tailFrameAssetId,
         error: null,
       },
     });
@@ -367,11 +448,14 @@ async function persistVideo(
         arkTaskId,
         localPath,
         gcsPath,
+        ossVideoUrl,
+        videoAssetId,
+        tailFrameAssetId,
       },
     });
 
     console.log(
-      `[worker] video persisted for ${arkTaskId}: local=${localPath}${gcsPath ? ` gcs=${gcsPath}` : ""}`
+      `[worker] video persisted for ${arkTaskId}: local=${localPath}${gcsPath ? ` gcs=${gcsPath}` : ""}${ossVideoUrl ? ` oss=${ossVideoUrl}` : ""}${videoAssetId ? ` videoAsset=${videoAssetId}` : ""}${tailFrameAssetId ? ` tailAsset=${tailFrameAssetId}` : ""}`
     );
   } catch (err) {
     console.error(
@@ -440,7 +524,13 @@ async function retryPersist() {
     },
     take: 5,
     include: {
-      storyboard: { select: { storyboardId: true } },
+      storyboard: {
+        select: {
+          id: true,
+          storyboardId: true,
+          project: { select: { id: true, userId: true, seriesId: true, episodeNumber: true } },
+        },
+      },
     },
   });
 
@@ -451,7 +541,15 @@ async function retryPersist() {
         task.id,
         task.arkTaskId,
         task.storyboard.storyboardId,
-        task.videoUrl
+        task.videoUrl,
+        {
+          seriesId: task.storyboard.project.seriesId,
+          projectId: task.storyboard.project.id,
+          episodeNumber: task.storyboard.project.episodeNumber,
+          userId: task.storyboard.project.userId,
+          storyboardRowId: task.storyboard.id,
+          lastFrameUrl: task.lastFrameUrl,
+        },
       );
     }
   }

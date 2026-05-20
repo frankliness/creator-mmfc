@@ -9,6 +9,8 @@ interface CreateTaskInput {
   ratio: string;
   resolution: string;
   seed?: number;
+  /** v2.0.0：是否在任务结果中返回尾帧 URL。Worker 用于自动资产化尾帧 */
+  returnLastFrame?: boolean;
 }
 
 interface CreateTaskResponse {
@@ -62,6 +64,11 @@ export async function createSeedanceTask(
     body.seed = input.seed;
   }
 
+  // v2.0.0：开启尾帧返回。Worker 会在轮询结果时从原始响应解析尾帧 URL
+  if (input.returnLastFrame) {
+    body.return_last_frame = true;
+  }
+
   const res = await fetch(
     `${BASE_URL}/contents/generations/tasks`,
     {
@@ -96,6 +103,11 @@ export interface TaskStatusResponse {
   status: string;
   content?: {
     video_url?: string;
+    /** v2.0.0：Seedance return_last_frame=true 时返回的尾帧 URL（字段名最终确认前保留多种兼容） */
+    last_frame_url?: string;
+    last_frame?: { url?: string };
+    image_url?: string;
+    images?: Array<{ url?: string }>;
   };
   usage?: {
     completion_tokens?: number;
@@ -109,6 +121,8 @@ export interface TaskStatusResponse {
     code?: string;
     message?: string;
   };
+  /** v2.0.0：保留原始 JSON 响应，供 Worker 容错解析尾帧 URL（PRD 第 11 条） */
+  raw?: unknown;
 }
 
 export async function getTaskStatus(
@@ -139,5 +153,28 @@ export async function getTaskStatus(
     throw new Error(`Seedance 查询任务失败: ${res.status}`);
   }
 
-  return res.json();
+  const raw = await res.json();
+  // 把原始 JSON 同时挂在 raw 字段上，Worker 用于兼容解析尾帧 URL
+  return { ...raw, raw } as TaskStatusResponse;
+}
+
+/**
+ * v2.0.0：从 Seedance 任务原始响应中兼容解析尾帧 URL。
+ * 字段名最终待 P1-B 阶段用真实任务验证；本函数尽量覆盖常见命名。
+ * 找不到时返回 null，Worker 端会走 ffmpeg 抽帧兜底。
+ */
+export function extractLastFrameUrl(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const content = r.content as Record<string, unknown> | undefined;
+  if (!content) return null;
+  if (typeof content.last_frame_url === "string") return content.last_frame_url;
+  const lf = content.last_frame as Record<string, unknown> | undefined;
+  if (lf && typeof lf.url === "string") return lf.url;
+  if (typeof content.image_url === "string") return content.image_url;
+  const imgs = content.images as Array<Record<string, unknown>> | undefined;
+  if (Array.isArray(imgs) && imgs.length > 0 && typeof imgs[imgs.length - 1]?.url === "string") {
+    return imgs[imgs.length - 1].url as string;
+  }
+  return null;
 }

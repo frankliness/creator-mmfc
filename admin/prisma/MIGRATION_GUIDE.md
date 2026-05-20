@@ -17,9 +17,26 @@ admin/prisma/
     ├── migration_lock.toml
     ├── 20260513000000_baseline_init/
     │   └── migration.sql         # 代表「切换 migrate 之前」的全量 schema
-    └── 20260513000001_admin_permissions_and_soft_delete/
-        └── migration.sql         # AdminUser 新增 permissions + deletedAt
+    ├── 20260513000001_admin_permissions_and_soft_delete/
+    │   └── migration.sql         # AdminUser 新增 permissions + deletedAt
+    ├── 20260514000000_v1_9_0_series_budget/
+    │   └── migration.sql         # v1.9.0 Series + 预算池
+    ├── 20260518000000_storyboard_display_name/
+    │   └── migration.sql         # v1.10.0 Storyboard.displayName
+    └── 20260520000000_v2_0_0_series_asset_library/
+        └── migration.sql         # v2.0.0 SeriesAssetGroup + SeriesAsset + Storyboard.assetRefs/generationMode + GenerationTask 5 字段
 ```
+
+## v2.0.0 迁移要点
+
+v2.0.0 在 v1.10.0 displayName migration 之后引入素材库相关 schema：
+
+- 新表 `SeriesAssetGroup`（Series ↔ BytePlus Group）
+- 新表 `SeriesAsset`（统一资产，含 `@@unique([seriesId, normalizedName])`）
+- `Storyboard` 加 `generationMode TEXT?` + `assetRefs JSONB?`（老字段 `assetBindings/seedanceContentItems` 保留）
+- `GenerationTask` 加 `ossVideoKey/ossVideoUrl/lastFrameUrl/lastFrameAssetId/videoAssetId` 五个 TEXT 字段及对应 index
+
+升级时确保按时间戳顺序执行：`...storyboard_display_name → v2_0_0_series_asset_library`。Web 端和 admin 端 migration SQL **完全一致**（同一份 DDL）。
 
 ## 首次接入线上环境（baselining）
 

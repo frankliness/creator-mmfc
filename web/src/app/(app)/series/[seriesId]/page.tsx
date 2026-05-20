@@ -118,6 +118,15 @@ export default async function SeriesDetailPage(
         }}
       />
 
+      <div className="flex flex-wrap gap-3">
+        <Link
+          href={`/series/${seriesId}/assets`}
+          className="rounded-md border bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
+        >
+          📁 素材库
+        </Link>
+      </div>
+
       <div>
         <h2 className="mb-3 text-lg font-semibold">集数</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

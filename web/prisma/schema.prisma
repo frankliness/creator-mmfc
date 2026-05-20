@@ -102,8 +102,14 @@ model Storyboard {
   duration             Int
   seed                 Int?
   prompt               String           @db.Text
+  /** Legacy（v2.0.0 前）：手填资产绑定数组。只读保留，新链路不再写入 */
   assetBindings        Json
+  /** Legacy（v2.0.0 前）：Seedance content 缓存。只读保留，新链路提交时由 resolver 现场生成 */
   seedanceContentItems Json
+  /** v2.0.0：生成模式互斥（FIRST_FRAME / MULTIMODAL）。null = legacy 老数据 */
+  generationMode       String?
+  /** v2.0.0：结构化资产引用 { first_frame_asset_id, last_frame_asset_id, reference_image_asset_ids[], reference_video_asset_ids[], reference_audio_asset_id } */
+  assetRefs            Json?
   status               StoryboardStatus @default(DRAFT)
   tasks                GenerationTask[]
   createdAt            DateTime         @default(now())
@@ -123,6 +129,15 @@ model GenerationTask {
   videoUrl         String?        @db.Text
   localVideoPath   String?
   gcsVideoPath     String?
+  /** v2.0.0：OSS 视频对象 key（永久 URL）。与 gcsVideoPath 双写期间并存 */
+  ossVideoKey      String?
+  ossVideoUrl      String?        @db.Text
+  /** v2.0.0：Seedance API 返回的尾帧 URL（24h 短期），仅供 Worker 下载用 */
+  lastFrameUrl     String?        @db.Text
+  /** v2.0.0：尾帧持久化后 SeriesAsset.id */
+  lastFrameAssetId String?
+  /** v2.0.0：视频持久化后 SeriesAsset.id */
+  videoAssetId     String?
   seed             BigInt?
   resolution       String?
   ratio            String?
@@ -138,6 +153,8 @@ model GenerationTask {
   @@index([storyboardId])
   @@index([status])
   @@index([apiConfigId])
+  @@index([videoAssetId])
+  @@index([lastFrameAssetId])
 }
 
 model UserApiConfig {
@@ -725,4 +742,97 @@ model BudgetEvent {
   @@index([seriesBudgetId, createdAt])
   @@index([projectId, createdAt])
   @@index([type, createdAt])
+}
+
+// ──────────────────────────────────────────────
+// v2.0.0：Series 素材库 + BytePlus Asset Library 集成
+// ──────────────────────────────────────────────
+
+/// Series 绑定的 BytePlus Asset Group。一个 Series 最多绑一个 Group。
+/// Group 创建失败时 status=FAILED 且 groupId 为空；Admin 可重试创建或改绑已有 Group。
+model SeriesAssetGroup {
+  id          String   @id @default(uuid())
+  seriesId    String   @unique
+  provider    String   @default("byteplus")
+  /** BytePlus 返回的 groupId；status=FAILED 时为空 */
+  groupId     String?
+  groupName   String
+  /** BytePlus GroupType：AIGC（默认） / Custom */
+  groupType   String   @default("AIGC")
+  projectName String   @default("default")
+  /** ACTIVE / FAILED / UNBOUND */
+  status      String   @default("ACTIVE")
+  /** 创建/同步失败时的错误信息 */
+  error       String?  @db.Text
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([groupId])
+}
+
+/// Series 素材库统一资产。所有 OSS 长期存储的图片/视频/音频通过此表登记。
+/// - source: MANUAL_UPLOAD / CANVAS_GENERATED / VIDEO_RESULT / VIDEO_TAIL_FRAME
+/// - byteplusSyncStatus: NOT_SYNCED / SYNCING / PROCESSING / SYNCED / FAILED
+/// - 唯一约束 (seriesId, normalizedName)：同 Series 全类型唯一
+model SeriesAsset {
+  id                  String   @id @default(uuid())
+  seriesId            String
+  projectId           String?
+  storyboardId        String?
+  generationTaskId    String?
+  canvasProjectId     String?
+  canvasAssetId       String?
+
+  /** 展示名（用户原始输入或系统生成，可含中文） */
+  name                String
+  /** 归一化名：trim → 小写化 → 空白折叠为单空格，用于唯一性判重 */
+  normalizedName      String
+  /** IMAGE / VIDEO / AUDIO */
+  type                String
+  /** MANUAL_UPLOAD / CANVAS_GENERATED / VIDEO_RESULT / VIDEO_TAIL_FRAME */
+  source              String
+
+  mimeType            String
+  bytes               Int
+  width               Int?
+  height              Int?
+  durationSec         Float?
+  fps                 Float?
+
+  /** 阿里云 OSS bucket */
+  ossBucket           String
+  /** OSS object key（永远不含中文，安全化路径） */
+  ossObjectKey        String
+  /** OSS 公网 URL */
+  ossPublicUrl        String   @db.Text
+  thumbnailUrl        String?  @db.Text
+
+  byteplusGroupId     String?
+  byteplusGroupName   String?
+  byteplusAssetId     String?
+  /** BytePlus AssetName，与展示名一致，最多 64 字符 */
+  byteplusAssetName   String?
+  /** BytePlus 资产类型：Image / Video / Audio */
+  byteplusAssetType   String?
+  /** NOT_SYNCED / SYNCING / PROCESSING / SYNCED / FAILED */
+  byteplusSyncStatus  String   @default("NOT_SYNCED")
+  byteplusSyncError   String?  @db.Text
+  syncedAt            DateTime?
+
+  metadata            Json?
+  createdBy           String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([seriesId, normalizedName])
+  @@index([seriesId, type])
+  @@index([seriesId, source])
+  @@index([seriesId, byteplusSyncStatus])
+  @@index([byteplusAssetId])
+  @@index([generationTaskId])
+  @@index([canvasAssetId])
+  @@index([projectId])
+  @@index([storyboardId])
 }

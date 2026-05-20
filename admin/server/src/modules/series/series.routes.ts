@@ -14,6 +14,13 @@ import {
   updateMember,
   softRemoveMember,
 } from "./series.service.js";
+import {
+  bindOrCreateAssetGroup,
+  getAssetGroup,
+  searchByteplusAssetGroups,
+  unbindAssetGroup,
+  type BindAssetGroupInput,
+} from "./asset-group.service.js";
 
 const listQuery = paginationSchema.extend({
   ownerId: z.string().optional(),
@@ -37,6 +44,14 @@ const budgetInput = z.object({
   allocationMode: z.enum(["BUFFER_THEN_AVERAGE", "AVERAGE", "NONE"]).optional(),
 });
 
+const assetGroupInput = z.object({
+  mode: z.enum(["bind", "create"]),
+  groupId: z.string().optional(),
+  groupName: z.string().max(64).optional(),
+  description: z.string().optional(),
+  projectName: z.string().optional(),
+}).optional();
+
 const createSeriesBody = z.object({
   name: z.string().min(1).max(200),
   description: z.string().optional().nullable(),
@@ -47,6 +62,16 @@ const createSeriesBody = z.object({
   defaultStyle: z.string().optional(),
   members: z.array(memberInput).default([]),
   resourceBudgets: z.array(budgetInput).default([]),
+  /** v2.0.0：可选 Asset Group 配置。未提供则 Series 创建后无绑定，Admin 可后续绑定 */
+  assetGroup: assetGroupInput,
+});
+
+const bindAssetGroupBody = z.object({
+  mode: z.enum(["bind", "create"]),
+  groupId: z.string().optional(),
+  groupName: z.string().max(64).optional(),
+  description: z.string().optional(),
+  projectName: z.string().optional(),
 });
 
 const updateSeriesBody = z.object({
@@ -145,7 +170,7 @@ export async function seriesRoutes(app: FastifyInstance) {
     const series = await prisma.series.findUnique({ where: { id } });
     if (!series) return reply.code(404).send({ error: "Series 不存在" });
 
-    const [members, projects, budgets, recentEvents, allocations] = await Promise.all([
+    const [members, projects, budgets, recentEvents, allocations, assetGroup] = await Promise.all([
       prisma.projectMember.findMany({
         where: { seriesId: id, status: "ACTIVE" },
         orderBy: { createdAt: "asc" },
@@ -169,6 +194,7 @@ export async function seriesRoutes(app: FastifyInstance) {
         take: 20,
       }),
       prisma.projectResourceAllocation.findMany({ where: { seriesId: id } }),
+      prisma.seriesAssetGroup.findUnique({ where: { seriesId: id } }),
     ]);
 
     const allocByBudget = new Map<string, typeof allocations>();
@@ -207,6 +233,7 @@ export async function seriesRoutes(app: FastifyInstance) {
         beforeUnallocated: e.beforeUnallocated?.toString() ?? null,
         afterUnallocated: e.afterUnallocated?.toString() ?? null,
       })),
+      assetGroup,
     };
   });
 
@@ -250,12 +277,32 @@ export async function seriesRoutes(app: FastifyInstance) {
       admin,
     );
 
+    // v2.0.0：DB 事务外异步创建 / 绑定 Asset Group。失败时 Series 已建好，落 FAILED 状态
+    let assetGroup: Awaited<ReturnType<typeof bindOrCreateAssetGroup>> | null = null;
+    if (body.assetGroup) {
+      try {
+        assetGroup = await bindOrCreateAssetGroup(
+          result.series.id,
+          body.assetGroup as BindAssetGroupInput,
+          admin.id,
+        );
+      } catch (e) {
+        // bindOrCreateAssetGroup 内部已捕获 BytePlus 错误。剩下能抛出来的是参数级错误（如缺 groupId）
+        request.log.warn({ err: e }, "Series 创建后 bindOrCreateAssetGroup 抛错");
+      }
+    }
+
     await createAuditLog({
       adminId: admin.id,
       action: "series.create",
       targetType: "Series",
       targetId: result.series.id,
-      after: { name: result.series.name, episodes: result.projects.length, budgets: result.budgets.length },
+      after: {
+        name: result.series.name,
+        episodes: result.projects.length,
+        budgets: result.budgets.length,
+        assetGroup: assetGroup ? { id: assetGroup.id, status: assetGroup.status, groupId: assetGroup.groupId } : null,
+      },
       ip: request.ip,
     });
 
@@ -264,7 +311,94 @@ export async function seriesRoutes(app: FastifyInstance) {
       name: result.series.name,
       episodes: result.projects.length,
       budgets: result.budgets.length,
+      assetGroup: assetGroup
+        ? {
+            id: assetGroup.id,
+            status: assetGroup.status,
+            groupId: assetGroup.groupId,
+            groupName: assetGroup.groupName,
+            error: assetGroup.error,
+          }
+        : null,
     });
+  });
+
+  // === Asset Group ===
+
+  // 查询 Series 当前绑定
+  app.get("/:id/asset-group", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const series = await prisma.series.findUnique({ where: { id } });
+    if (!series) return reply.code(404).send({ error: "Series 不存在" });
+    const row = await getAssetGroup(id);
+    return row;
+  });
+
+  // 创建 / 绑定 / 重试 / 改绑：复用同一接口（upsert 语义）
+  app.post("/:id/asset-group", { preHandler: [requirePermission("series", "write")] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = bindAssetGroupBody.parse(request.body);
+    const series = await prisma.series.findUnique({ where: { id } });
+    if (!series) return reply.code(404).send({ error: "Series 不存在" });
+    const admin = request.user as { id: string };
+    const before = await getAssetGroup(id);
+    let row;
+    try {
+      row = await bindOrCreateAssetGroup(id, body as BindAssetGroupInput, admin.id);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Asset Group 绑定失败";
+      return reply.code(400).send({ error: msg });
+    }
+    await createAuditLog({
+      adminId: admin.id,
+      action: before ? "series.asset_group.rebind" : "series.asset_group.create",
+      targetType: "SeriesAssetGroup",
+      targetId: row.id,
+      before: before
+        ? { groupId: before.groupId, groupName: before.groupName, status: before.status }
+        : undefined,
+      after: { mode: body.mode, groupId: row.groupId, groupName: row.groupName, status: row.status, error: row.error },
+      ip: request.ip,
+    });
+    return row;
+  });
+
+  // 解绑（保留行，status=UNBOUND）
+  app.delete("/:id/asset-group", { preHandler: [requirePermission("series", "write")] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const series = await prisma.series.findUnique({ where: { id } });
+    if (!series) return reply.code(404).send({ error: "Series 不存在" });
+    const admin = request.user as { id: string };
+    const before = await getAssetGroup(id);
+    if (!before) return reply.code(404).send({ error: "未绑定 Asset Group" });
+    const after = await unbindAssetGroup(id);
+    await createAuditLog({
+      adminId: admin.id,
+      action: "series.asset_group.unbind",
+      targetType: "SeriesAssetGroup",
+      targetId: before.id,
+      before: { groupId: before.groupId, status: before.status },
+      after: { groupId: null, status: after?.status },
+      ip: request.ip,
+    });
+    return { message: "已解绑" };
+  });
+
+  // 查询 BytePlus 账号下的 Asset Group 列表（Admin 选择已有 Group 时使用）
+  app.get("/byteplus/asset-groups", async (request, reply) => {
+    const q = z.object({
+      keyword: z.string().optional(),
+      projectName: z.string().optional(),
+      pageSize: z.coerce.number().int().min(1).max(200).optional(),
+      pageToken: z.string().optional(),
+    }).parse(request.query);
+    try {
+      const result = await searchByteplusAssetGroups(q);
+      return result;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "查询 BytePlus Asset Group 失败";
+      return reply.code(502).send({ error: msg });
+    }
   });
 
   // === 修改基础信息 ===

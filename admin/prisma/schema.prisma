@@ -122,8 +122,14 @@ model Storyboard {
   duration             Int
   seed                 Int?
   prompt               String           @db.Text
+  /** Legacy：手填资产绑定数组。只读保留 */
   assetBindings        Json
+  /** Legacy：Seedance content 缓存。只读保留 */
   seedanceContentItems Json
+  /** v2.0.0：生成模式 FIRST_FRAME / MULTIMODAL；null = legacy */
+  generationMode       String?
+  /** v2.0.0：结构化资产引用 */
+  assetRefs            Json?
   status               StoryboardStatus @default(DRAFT)
   tasks                GenerationTask[]
   createdAt            DateTime         @default(now())
@@ -152,6 +158,11 @@ model GenerationTask {
   videoUrl         String?        @db.Text
   localVideoPath   String?
   gcsVideoPath     String?
+  ossVideoKey      String?
+  ossVideoUrl      String?        @db.Text
+  lastFrameUrl     String?        @db.Text
+  lastFrameAssetId String?
+  videoAssetId     String?
   seed             BigInt?
   resolution       String?
   ratio            String?
@@ -167,6 +178,8 @@ model GenerationTask {
   @@index([storyboardId])
   @@index([status])
   @@index([apiConfigId])
+  @@index([videoAssetId])
+  @@index([lastFrameAssetId])
 }
 
 enum TaskStatus {
@@ -735,4 +748,82 @@ model BudgetEvent {
   @@index([seriesBudgetId, createdAt])
   @@index([projectId, createdAt])
   @@index([type, createdAt])
+}
+
+// ──────────────────────────────────────────────
+// v2.0.0：Series 素材库 + BytePlus Asset Library 集成
+// ──────────────────────────────────────────────
+
+/// Series 绑定的 BytePlus Asset Group。一个 Series 最多绑一个 Group。
+model SeriesAssetGroup {
+  id          String   @id @default(uuid())
+  seriesId    String   @unique
+  provider    String   @default("byteplus")
+  groupId     String?
+  groupName   String
+  groupType   String   @default("AIGC")
+  projectName String   @default("default")
+  /** ACTIVE / FAILED / UNBOUND */
+  status      String   @default("ACTIVE")
+  error       String?  @db.Text
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([groupId])
+}
+
+/// Series 素材库统一资产表。
+/// source: MANUAL_UPLOAD / CANVAS_GENERATED / VIDEO_RESULT / VIDEO_TAIL_FRAME
+/// byteplusSyncStatus: NOT_SYNCED / SYNCING / PROCESSING / SYNCED / FAILED
+model SeriesAsset {
+  id                  String   @id @default(uuid())
+  seriesId            String
+  projectId           String?
+  storyboardId        String?
+  generationTaskId    String?
+  canvasProjectId     String?
+  canvasAssetId       String?
+
+  name                String
+  normalizedName      String
+  type                String
+  source              String
+
+  mimeType            String
+  bytes               Int
+  width               Int?
+  height              Int?
+  durationSec         Float?
+  fps                 Float?
+
+  ossBucket           String
+  ossObjectKey        String
+  ossPublicUrl        String   @db.Text
+  thumbnailUrl        String?  @db.Text
+
+  byteplusGroupId     String?
+  byteplusGroupName   String?
+  byteplusAssetId     String?
+  byteplusAssetName   String?
+  byteplusAssetType   String?
+  byteplusSyncStatus  String   @default("NOT_SYNCED")
+  byteplusSyncError   String?  @db.Text
+  syncedAt            DateTime?
+
+  metadata            Json?
+  createdBy           String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([seriesId, normalizedName])
+  @@index([seriesId, type])
+  @@index([seriesId, source])
+  @@index([seriesId, byteplusSyncStatus])
+  @@index([byteplusAssetId])
+  @@index([generationTaskId])
+  @@index([canvasAssetId])
+  @@index([projectId])
+  @@index([storyboardId])
 }

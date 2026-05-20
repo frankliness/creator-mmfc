@@ -1,8 +1,8 @@
 # Creator MMFC
 
-**版本：1.10.3**
+**版本：2.0.0**
 
-面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，可选 **GCS** 做对象存储。
+面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，对象存储**新链路走阿里云 OSS**（v2.0.0 起，旧链路 GCS 保留只读），并集成 **BytePlus Asset Library** 供 Seedance 视频生成引用资产。
 
 ## 仓库结构
 
@@ -56,6 +56,20 @@
 - 凭据池管理：CRUD、连通性探测、主用凭据、用途/模型粒度适用范围、**按 (渠道, 模型) 独立并发上限**
 - 默认模型管理、模型注册表、用户行为日志、审计日志、Token 统计
 - **v1.9.0：Series 管理（5 Tab 详情：概览 / 成员 / 预算 / 集数 / 日志）+ Series 创建表单 + 预算调整**
+- **v2.0.0：Series 详情页"素材组"Tab — 绑定 / 创建 / 重试 / 改绑 / 解绑 BytePlus Asset Group**
+
+### v2.0.0 新增：Series 素材库 + 阿里云 OSS + BytePlus 闭环
+
+**整体目标**：取消旧版本里"用户在分镜里手填 `asset_uri`"的所有路径，建立 Series 级统一素材库。
+
+- **Series 素材库页面**（`/series/[id]/assets`）：上传图片/视频/音频 → metadata probe → 阿里云 OSS → SeriesAsset 入库 → 异步同步 BytePlus，3 秒轮询同步状态
+- **资产命名规则**：同 Series 全类型唯一，最大 64 字符，DB 展示名保留中文，OSS object key 用 UUID 安全化
+- **分镜资产 picker modal**（替代旧的 asset_uri 手填）：FIRST_FRAME / MULTIMODAL 两种模式互斥，模式内分槽位选择 SYNCED 状态的资产；首帧资产名自动填入分镜 displayName
+- **分镜提交校验链**：Series 必须绑定有效 Asset Group、所有引用资产必须 SYNCED 且属于当前 Group、模式合法、参考图≤9 张 / 参考视频≤3 个总时长≤15s
+- **Seedance content[] 协议**：全部走 `asset://<byteplusAssetId>`，提交时由后端 resolver 现场生成
+- **Worker 自动资产化**：Seedance 视频生成成功后，Worker 自动下载视频 + 尾帧（API URL 优先，缺失时 ffmpeg 抽末帧）→ 上 OSS → 创建 SeriesAsset(VIDEO_RESULT / VIDEO_TAIL_FRAME) → 同步 BytePlus
+- **Canvas → 素材库同步**：Canvas 节点新增"同步到素材库"按钮 + 命名 modal，复制图片二进制到 OSS 创建 SeriesAsset(CANVAS_GENERATED)
+- **Admin Asset Group 管理**：创建 Series 时可选绑定已有 / 新建 BytePlus Group；创建失败 Series 仍创建成功，Group 落 FAILED 状态可重试
 
 ### v1.9.0 新增：Series 项目空间
 
@@ -64,6 +78,135 @@
 - OWNER buffer 调配（buffer ↔ 集数双向）、集数锁定 / 解锁
 - 新建画布弹窗可绑定 Series；画布生图调用从 Series 预算池扣减
 - 画布快照乐观锁互踢提示、画布文字节点拖拽缩放
+
+---
+
+### 版本 2.0.0 更新摘要
+
+**主要特性：Series 素材库 + 阿里云 OSS + BytePlus Asset Library 闭环**
+
+本版本聚焦"资产链路统一"。在 v1.9.0 的 Series 项目空间基础上，引入 Series 级统一素材库；阿里云 OSS 作为长期对象存储（与旧 GCS 链路并存）；首次接入 BytePlus Asset Library 给 Seedance 视频生成提供 `asset://` 引用协议；分镜提交全面取消手填 `asset_uri / assetsJson`。
+
+#### 1. 数据模型（双 schema）
+
+新增：
+
+- `SeriesAssetGroup`：Series ↔ BytePlus Asset Group 1:1 软绑定。`status`：`ACTIVE` / `FAILED`（创建失败时仍保留记录，可重试）/ `UNBOUND`（手动解绑）
+- `SeriesAsset`：统一资产。`source` 4 种：`MANUAL_UPLOAD` / `CANVAS_GENERATED` / `VIDEO_RESULT` / `VIDEO_TAIL_FRAME`。`byteplusSyncStatus` 5 种：`NOT_SYNCED` / `SYNCING` / `PROCESSING` / `SYNCED` / `FAILED`。`(seriesId, normalizedName)` 唯一约束保证同 Series 全类型不重名。
+
+修改：
+
+- `Storyboard.generationMode`（FIRST_FRAME / MULTIMODAL；为空视为 legacy 老数据）+ `Storyboard.assetRefs`（结构化 JSON 引用）。老的 `assetBindings` / `seedanceContentItems` 字段保留只读不再写入。
+- `Storyboard.displayName`（与 v1.10.0 inline rename 互通）—— picker 选首帧资产时自动填充该字段。
+- `GenerationTask`：加 `ossVideoKey / ossVideoUrl / lastFrameUrl / lastFrameAssetId / videoAssetId` 五个字段，Worker 持久化时回填。
+
+迁移：`20260520000000_v2_0_0_series_asset_library`，跟在 v1.10.0 的 `20260518000000_storyboard_display_name` 之后。
+
+#### 2. 资产命名与 OSS 路径规则
+
+- 用户展示名 `SeriesAsset.name`：保留原始输入，**允许中文**，最大 64 字符
+- `normalizedName`：`trim → 小写化 → 多空白折叠为单空格`，用于唯一性判重
+- 非法字符：`/ \ ? # % & =` 与换行、制表符
+- OSS object key 安全化（**永不含中文**）：
+  - 手动上传 / Canvas：`series/{seriesId}/assets/{assetId}.{ext}`
+  - 视频：`series/{seriesId}/episodes/EP{n}/{storyboardId}_video.mp4`
+  - 尾帧：`series/{seriesId}/episodes/EP{n}/{storyboardId}_tail.png`
+- BytePlus `AssetName` 用展示名（支持中文模糊搜索）
+
+#### 3. 用户端
+
+- 新路由 `/series/[seriesId]/assets`：上传 + 类型/来源/同步状态筛选 + 缩略图预览 + 单卡同步/重试操作；前端 3 秒轮询 SYNCING 状态的资产
+- 上传链路：metadata probe（sharp / fluent-ffmpeg）→ 阿里云 OSS PUT → 写 SeriesAsset → 异步触发 BytePlus CreateAsset
+- 分镜资产 picker modal（`asset-picker-modal.tsx`）：
+  - 顶部 displayName 输入（最大 80 字符，picker 选首帧资产时自动填入资产名）
+  - 模式 toggle：FIRST_FRAME / MULTIMODAL 互斥，切换时清空对方字段
+  - FIRST_FRAME：首帧必填、尾帧可选
+  - MULTIMODAL：参考图 1-9 张 / 参考视频 0-3 个 / 参考音频 0-1 个，不能只有音频
+  - 资产选择器只显示当前 Series Group 下 SYNCED 资产
+- 分镜提交 `/api/storyboards/[id]/submit`：
+  - 新链路 `generationMode + assetRefs` 优先，由 `storyboard-asset-resolver.ts` 校验 Series 绑 Group + 资产 SYNCED + 模式互斥 + 模型能力 + 数量约束，并输出 Seedance content[]（全 `asset://<byteplusAssetId>`）
+  - Legacy（老分镜无 `assetRefs`）保留 `seedanceContentItems` 透传
+  - Seedance 调用加 `return_last_frame: true`
+- Canvas 节点新增"同步到素材库"按钮 + 命名 modal（`from-canvas` 端点）
+
+#### 4. Worker
+
+- `video-persist.ts`：在原 GCS 链路之外新增 OSS 持久化分支
+  - 视频结果 → OSS + 创建 SeriesAsset(VIDEO_RESULT) + 异步同步 BytePlus → 回填 `GenerationTask.videoAssetId/ossVideoUrl`
+  - 尾帧：Seedance API 返回 URL 时优先下载，缺失时用 `@ffmpeg-installer/ffmpeg` 抽 mp4 末帧（不依赖系统 ffmpeg），处理同视频
+- `seedance.ts` `getTaskStatus` 透传 `raw` JSON，便于 Worker 兼容解析尾帧字段：`content.last_frame_url ?? content.last_frame?.url ?? content.image_url ?? content.images?.[-1]?.url`
+
+#### 5. Admin 后台
+
+- 创建 Series 时可选 BytePlus Group 配置：
+  - "绑定已有"：搜索 BytePlus 账号下的现成 Group
+  - "创建新 Group"：调 BytePlus CreateAssetGroup，失败时 Series 仍创建成功，Group 落 `status=FAILED` 可重试
+- Series 详情页加"素材组"Tab：状态展示 + 重试 / 改绑 / 解绑按钮
+- API：`POST/GET/DELETE /api/admin/series/:id/asset-group` + `GET /api/admin/series/byteplus/asset-groups`
+
+#### 6. BytePlus Asset Library 真实协议
+
+经真实账号端到端验证：
+
+- Endpoint：`https://open.byteplusapi.com/`
+- 认证：Volcengine 标准 V4 HMAC-SHA256 签名（service=`ark`, region=`ap-southeast-1`, version=`2024-01-01`）
+- 协议：POST + JSON body + `?Action=X&Version=2024-01-01` query
+- 5 个 action：`CreateAssetGroup` / `GetAssetGroup` / `ListAssetGroups`（Filter.GroupType 必填）/ `CreateAsset`（URL 大写字段名 + AssetType 必填）/ `GetAsset`
+- 图片限制：宽 300-6000px
+- OSS bucket 私读时**必须用预签名 URL**给 BytePlus，TTL ≥ 1h；公读 bucket 也可直接传公网 URL
+
+环境变量改名：
+- `BYTEPLUS_API_KEY` → `BYTEPLUS_ACCESS_KEY` + `BYTEPLUS_SECRET_KEY`
+- 新增 `BYTEPLUS_REGION` / `BYTEPLUS_ENDPOINT` / `BYTEPLUS_PROJECT_NAME`
+- 新增阿里云 OSS：`ALIYUN_OSS_REGION / BUCKET / ACCESS_KEY_ID / ACCESS_KEY_SECRET / ENDPOINT / PUBLIC_HOST`
+
+#### 7. 1.10.x 兼容性
+
+本版本从 v1.9.1 基线开发，已主动合入 v1.10.0–v1.10.3 全部改动：
+
+- v1.10.0：Storyboard.displayName（与 picker 联动）/ Series owner 同步事务化 / 更换导演 UI / formatEpisodeTitle helper / session-guard 单设备登录 / 账户改名 / Canvas owner 同步
+- v1.10.1：Admin Token Usage 报告
+- v1.10.2：Canvas stats 修复
+- v1.10.3：版本号
+
+#### 8. 新依赖
+
+- `ali-oss` ^6.23.0 + `@types/ali-oss`
+- `sharp` ^0.34.0（图片 metadata probe）
+- `fluent-ffmpeg` ^2.1.3 + `@types/fluent-ffmpeg`
+- `@ffmpeg-installer/ffmpeg` ^1.1.0 + `@ffprobe-installer/ffprobe` ^2.1.2（跨平台 bundle 二进制，**不依赖系统 ffmpeg**）
+
+`next.config.ts` 新增 `serverExternalPackages`：把 ali-oss / sharp / fluent-ffmpeg / @ffmpeg-installer / @ffprobe-installer 标为 server-external，避免 Next 16 Turbopack 误把动态 require 和 README 当模块解析。
+
+#### 9. 端到端验证
+
+用户真实 BytePlus + 阿里云 OSS 凭据完整跑通：
+
+1. ✅ OSS PUT/HEAD/signed URL
+2. ✅ BytePlus CreateAssetGroup
+3. ✅ BytePlus GetAssetGroup / ListAssetGroups (keyword filter)
+4. ✅ BytePlus CreateAsset with OSS signed URL
+5. ✅ BytePlus GetAsset poll → Active (2 轮内)
+6. ✅ 测试 group 清理（DeleteAssetGroup action 验证可用）
+
+详细见 PR 描述。
+
+#### 10. 数据库迁移
+
+```bash
+# 拉取最新 schema 后
+cd web && npx prisma db push   # 或 npx prisma migrate deploy
+cd admin/server && npm run db:generate
+```
+
+新表 `SeriesAssetGroup`、`SeriesAsset`；老的 Storyboard `assetBindings/seedanceContentItems` 字段保留只读，新提交自动写入 `generationMode + assetRefs`。
+
+#### 11. 升级注意
+
+- **环境变量必须配齐**：`ALIYUN_OSS_ACCESS_KEY_ID / ALIYUN_OSS_ACCESS_KEY_SECRET / ALIYUN_OSS_REGION / ALIYUN_OSS_BUCKET` + `BYTEPLUS_ACCESS_KEY / BYTEPLUS_SECRET_KEY`，否则资产上传 / 同步会报错
+- **OSS bucket**：推荐保持私读（更安全），代码会用预签名 URL 给 BytePlus；公读也可
+- **管理员行动**：创建 Series 时必须绑定或新建 BytePlus Group，否则用户上传素材只能落 OSS 不能同步、分镜也无法提交 Seedance
+- **老分镜兼容**：v1.9.0/1.10.x 创建的分镜（含 `seedanceContentItems` 字符串数组）继续可提交，但新创建分镜强制走 picker
 
 ---
 

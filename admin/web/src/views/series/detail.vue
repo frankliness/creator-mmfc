@@ -199,6 +199,91 @@
         </a-card>
       </a-tab-pane>
 
+      <a-tab-pane key="assetGroup" tab="素材组">
+        <a-card>
+          <template v-if="data?.assetGroup">
+            <a-descriptions :column="2" bordered size="small">
+              <a-descriptions-item label="状态" :span="2">
+                <a-tag :color="assetGroupStatusColor(data.assetGroup.status)">{{ data.assetGroup.status }}</a-tag>
+                <span v-if="data.assetGroup.status === 'FAILED'" style="color: #f5222d; margin-left: 8px">
+                  {{ data.assetGroup.error || "未知错误" }}
+                </span>
+              </a-descriptions-item>
+              <a-descriptions-item label="Group ID">{{ data.assetGroup.groupId || "—" }}</a-descriptions-item>
+              <a-descriptions-item label="Group 名称">{{ data.assetGroup.groupName }}</a-descriptions-item>
+              <a-descriptions-item label="Group 类型">{{ data.assetGroup.groupType }}</a-descriptions-item>
+              <a-descriptions-item label="Project">{{ data.assetGroup.projectName }}</a-descriptions-item>
+              <a-descriptions-item label="创建时间">{{ new Date(data.assetGroup.createdAt).toLocaleString() }}</a-descriptions-item>
+              <a-descriptions-item label="更新时间">{{ new Date(data.assetGroup.updatedAt).toLocaleString() }}</a-descriptions-item>
+            </a-descriptions>
+
+            <a-divider />
+
+            <a-space v-if="canWrite">
+              <a-button
+                v-if="data.assetGroup.status === 'FAILED'"
+                type="primary"
+                @click="onRetryAssetGroup"
+              >重试创建</a-button>
+              <a-button @click="openBindModal('rebind')">改绑其它 Group</a-button>
+              <a-popconfirm title="解绑后该 Series 无法上传 / 同步素材，确认？" @confirm="onUnbindAssetGroup">
+                <a-button danger>解绑</a-button>
+              </a-popconfirm>
+            </a-space>
+          </template>
+
+          <template v-else>
+            <a-empty description="尚未绑定 BytePlus Asset Group" style="padding: 20px 0">
+              <a-space v-if="canWrite">
+                <a-button type="primary" @click="openBindModal('create')">创建新 Group</a-button>
+                <a-button @click="openBindModal('bind')">绑定已有 Group</a-button>
+              </a-space>
+            </a-empty>
+          </template>
+        </a-card>
+
+        <a-modal
+          v-model:open="bindModalOpen"
+          :title="bindModalMode === 'create' ? '创建新 Asset Group' : '绑定已有 Asset Group'"
+          :confirm-loading="bindSubmitting"
+          @ok="onConfirmBind"
+        >
+          <a-radio-group v-model:value="bindModalMode" style="margin-bottom: 12px">
+            <a-radio-button value="create">创建新 Group</a-radio-button>
+            <a-radio-button value="bind">绑定已有</a-radio-button>
+          </a-radio-group>
+
+          <a-form layout="vertical">
+            <template v-if="bindModalMode === 'create'">
+              <a-form-item label="Group 名称" required>
+                <a-input
+                  v-model:value="bindForm.groupName"
+                  placeholder="最大 64 字符"
+                  :maxlength="64"
+                  show-count
+                />
+              </a-form-item>
+              <a-form-item label="描述（可选）">
+                <a-textarea v-model:value="bindForm.description" :rows="2" :maxlength="200" />
+              </a-form-item>
+            </template>
+            <template v-else>
+              <a-form-item label="搜索 BytePlus Group">
+                <a-select
+                  v-model:value="bindForm.groupId"
+                  show-search
+                  placeholder="输入关键字搜索"
+                  :filter-option="false"
+                  :options="byteplusGroupOptions"
+                  :loading="searchingGroups"
+                  @search="onSearchByteplusGroups"
+                />
+              </a-form-item>
+            </template>
+          </a-form>
+        </a-modal>
+      </a-tab-pane>
+
       <a-tab-pane key="logs" tab="日志">
         <a-card>
           <a-table :data-source="events" :columns="eventColumns" :loading="eventsLoading" :pagination="eventsPagination" row-key="id" size="small" @change="onEventsChange">
@@ -284,6 +369,22 @@
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <!-- v1.10.0：更换导演 -->
+    <a-modal v-model:open="changeOwnerOpen" title="更换导演" @ok="onConfirmChangeOwner">
+      <a-form layout="vertical">
+        <a-form-item label="新导演">
+          <a-select
+            v-model:value="changeOwnerUserId"
+            show-search
+            option-filter-prop="label"
+            placeholder="选择用户（也会自动成为 Series 成员并升级为 OWNER）"
+            :options="userOptions"
+            style="width: 100%"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </div>
 </template>
 
@@ -296,6 +397,8 @@ import {
   addSeriesMember, updateSeriesMember, removeSeriesMember,
   adjustResourceBudget, listBudgetEvents,
   assignProjectToSeries, distributeSeriesBudget,
+  bindSeriesAssetGroup, unbindSeriesAssetGroup, listByteplusAssetGroups,
+  type AssetGroupInput, type ByteplusAssetGroupSummary,
 } from "@/api/series";
 import { getProjects } from "@/api/projects";
 import { getUsers } from "@/api/users";
@@ -437,6 +540,110 @@ function tokenBudgetsForEpisode(projectId: string): Array<{
 async function load() {
   const res: any = await getSeries(seriesId);
   data.value = res;
+}
+
+// v2.0.0：Asset Group 管理
+const bindModalOpen = ref(false);
+const bindModalMode = ref<"create" | "bind">("create");
+const bindForm = ref({
+  groupName: "",
+  description: "",
+  groupId: undefined as string | undefined,
+});
+const bindSubmitting = ref(false);
+const byteplusGroupOptions = ref<{ value: string; label: string }[]>([]);
+const searchingGroups = ref(false);
+let groupSearchSeq = 0;
+
+function assetGroupStatusColor(s?: string) {
+  return { ACTIVE: "green", FAILED: "red", UNBOUND: "default" }[s ?? ""] || "default";
+}
+
+function openBindModal(initialMode: "create" | "bind" | "rebind") {
+  bindModalMode.value = initialMode === "rebind" ? "bind" : initialMode;
+  bindForm.value = {
+    groupName: data.value?.name ?? "",
+    description: "",
+    groupId: undefined,
+  };
+  byteplusGroupOptions.value = [];
+  bindModalOpen.value = true;
+}
+
+async function onSearchByteplusGroups(keyword: string) {
+  const seq = ++groupSearchSeq;
+  searchingGroups.value = true;
+  try {
+    const res: any = await listByteplusAssetGroups({ keyword, pageSize: 30 });
+    if (seq !== groupSearchSeq) return;
+    const items = (res?.items ?? []) as ByteplusAssetGroupSummary[];
+    byteplusGroupOptions.value = items.map((g) => ({
+      value: g.groupId,
+      label: `${g.groupName} (${g.groupId.slice(0, 8)}…)`,
+    }));
+  } catch {
+    if (seq === groupSearchSeq) byteplusGroupOptions.value = [];
+  } finally {
+    if (seq === groupSearchSeq) searchingGroups.value = false;
+  }
+}
+
+async function onConfirmBind() {
+  let payload: AssetGroupInput;
+  if (bindModalMode.value === "create") {
+    const name = bindForm.value.groupName.trim();
+    if (!name) return message.warning("请填写 Group 名称");
+    if (name.length > 64) return message.warning("Group 名称最大 64 字符");
+    payload = { mode: "create", groupName: name, description: bindForm.value.description || undefined };
+  } else {
+    if (!bindForm.value.groupId) return message.warning("请选择要绑定的 Group");
+    const selected = byteplusGroupOptions.value.find((o) => o.value === bindForm.value.groupId);
+    payload = { mode: "bind", groupId: bindForm.value.groupId, groupName: selected?.label };
+  }
+  bindSubmitting.value = true;
+  try {
+    const res: any = await bindSeriesAssetGroup(seriesId, payload);
+    if (res?.status === "FAILED") {
+      message.error(`BytePlus 调用失败：${res.error || "未知错误"}。可继续重试。`);
+    } else {
+      message.success("已绑定 Asset Group");
+      bindModalOpen.value = false;
+    }
+    await load();
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || "绑定失败");
+  } finally {
+    bindSubmitting.value = false;
+  }
+}
+
+async function onRetryAssetGroup() {
+  const group = data.value?.assetGroup;
+  if (!group) return;
+  try {
+    const res: any = await bindSeriesAssetGroup(seriesId, {
+      mode: "create",
+      groupName: group.groupName,
+    });
+    if (res?.status === "FAILED") {
+      message.error(`重试失败：${res.error || "未知错误"}`);
+    } else {
+      message.success("Group 创建成功");
+    }
+    await load();
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || "重试失败");
+  }
+}
+
+async function onUnbindAssetGroup() {
+  try {
+    await unbindSeriesAssetGroup(seriesId);
+    message.success("已解绑");
+    await load();
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || "解绑失败");
+  }
 }
 
 const userOptions = ref<{ value: string; label: string }[]>([]);

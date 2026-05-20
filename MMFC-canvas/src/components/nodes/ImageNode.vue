@@ -73,6 +73,17 @@
               </template>
               下载
             </n-tooltip>
+            <!-- v2.0.0：同步到 Series 素材库 -->
+            <n-tooltip v-if="canSyncToSeries" trigger="hover">
+              <template #trigger>
+                <button @click="openSyncDialog" class="p-1 hover:bg-[var(--bg-tertiary)] rounded transition-colors">
+                  <n-icon :size="14">
+                    <CloudUploadOutline />
+                  </n-icon>
+                </button>
+              </template>
+              {{ data.seriesAssetId ? '已同步' : '同步到素材库' }}
+            </n-tooltip>
             <n-tooltip trigger="hover">
               <template #trigger>
                 <button @click="handleDuplicate" class="p-1 hover:bg-[var(--bg-tertiary)] rounded transition-colors">
@@ -323,6 +334,33 @@
       </div>
     </div>
   </n-modal>
+
+  <!-- v2.0.0：同步到 Series 素材库 -->
+  <n-modal v-model:show="showSyncDialog" preset="card" title="同步到 Series 素材库" class="w-[420px]" :mask-closable="!syncing">
+    <div class="space-y-3">
+      <p class="text-xs text-[var(--text-secondary)]">
+        为这张图片在 Series 素材库中起一个名字（最大 64 字符），同步后可在分镜中引用。同名资产会被拒绝。
+      </p>
+      <input
+        v-model="syncName"
+        type="text"
+        :maxlength="64"
+        placeholder="例如：伊莎贝拉、第3集主角特写"
+        class="w-full px-3 py-2 text-sm bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg outline-none focus:border-[var(--accent-color)] text-[var(--text-primary)]"
+        @keydown.enter="confirmSyncToSeries"
+      />
+      <label class="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+        <input type="checkbox" v-model="syncImmediately" />
+        立即同步到 BytePlus（取消勾选则仅保存到 OSS，需在素材库页面手动同步）
+      </label>
+      <div class="flex justify-end gap-2">
+        <n-button size="small" @click="showSyncDialog = false" :disabled="syncing">取消</n-button>
+        <n-button type="primary" size="small" :loading="syncing" :disabled="!syncName.trim()" @click="confirmSyncToSeries">
+          同步
+        </n-button>
+      </div>
+    </div>
+  </n-modal>
 </template>
 
 <script setup>
@@ -333,8 +371,9 @@
 import { ref, nextTick, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Handle, Position, useVueFlow } from '@vue-flow/core'
 import { NIcon, NTooltip, NSwitch, NImagePreview, NModal, NButton } from 'naive-ui'
-import { TrashOutline, ExpandOutline, ImageOutline, CloseCircleOutline, CopyOutline, VideocamOutline, DownloadOutline, EyeOutline, BrushOutline, RefreshOutline, ColorWandOutline, SwapHorizontalOutline } from '@vicons/ionicons5'
+import { TrashOutline, ExpandOutline, ImageOutline, CloseCircleOutline, CopyOutline, VideocamOutline, DownloadOutline, EyeOutline, BrushOutline, RefreshOutline, ColorWandOutline, SwapHorizontalOutline, CloudUploadOutline } from '@vicons/ionicons5'
 import { updateNode, removeNode, duplicateNode, addNode, addEdge, nodes, currentProjectId } from '../../stores/canvas'
+import { currentProject } from '../../stores/projects'
 import NodeHandleMenu from './NodeHandleMenu.vue'
 import { DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_SIZE } from '../../config/models'
 import { uploadAsset } from '../../api'
@@ -366,6 +405,60 @@ const uploadFileInputRef = ref(null)
 const showReplaceModal = ref(false)
 const replaceUrlInput = ref('')
 const replaceFileInputRef = ref(null)
+
+// v2.0.0：同步到 Series 素材库
+const showSyncDialog = ref(false)
+const syncName = ref('')
+const syncImmediately = ref(true)
+const syncing = ref(false)
+
+// 仅当：1) 节点有 assetId（已落 CanvasAsset） 2) 当前 Canvas 属于某 Series
+const canSyncToSeries = computed(() => {
+  return !!props.data?.assetId && !!currentProject.value?.seriesId
+})
+
+function openSyncDialog() {
+  if (!canSyncToSeries.value) return
+  syncName.value = (props.data?.label || '').trim()
+  syncImmediately.value = true
+  showSyncDialog.value = true
+}
+
+async function confirmSyncToSeries() {
+  const name = syncName.value.trim()
+  if (!name) return
+  if (name.length > 64) {
+    window.$message?.error('名称最大 64 字符')
+    return
+  }
+  const seriesId = currentProject.value?.seriesId
+  const canvasAssetId = props.data?.assetId
+  if (!seriesId || !canvasAssetId) return
+  syncing.value = true
+  try {
+    // 注意：from-canvas 路径在主站 /api/workspace 下，不是 /api/canvas，所以需要走绝对路径
+    const baseOrigin = window.location.origin
+    const url = `${baseOrigin}/api/workspace/series/${seriesId}/assets/from-canvas${syncImmediately.value ? '?sync=true' : ''}`
+    const res = await fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ canvasAssetId, name }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data?.error || '同步失败')
+    updateNode(props.id, {
+      seriesAssetId: data.assetId,
+      updatedAt: Date.now(),
+    })
+    window.$message?.success(syncImmediately.value ? '已同步，正在写入 BytePlus' : '已加入素材库（未同步 BytePlus）')
+    showSyncDialog.value = false
+  } catch (err) {
+    window.$message?.error(err?.message || '同步失败')
+  } finally {
+    syncing.value = false
+  }
+}
 
 // Inpainting state | 涂抹重绘状态
 const isInpaintMode = ref(false)

@@ -69,6 +69,54 @@
         </a-form-item>
       </a-card>
 
+      <a-card title="BytePlus Asset Group（素材库绑定）" style="margin-bottom: 16px">
+        <p style="color: #999; margin-bottom: 12px">
+          Series 绑定 BytePlus Asset Group 后，用户上传的素材会同步到该 Group，分镜提交 Seedance 时引用其中的 Active 资产。
+          可后续在详情页修改 / 重试。
+        </p>
+        <a-form-item label="配置方式">
+          <a-radio-group v-model:value="assetGroupForm.mode">
+            <a-radio value="skip">暂不配置（创建后再设置）</a-radio>
+            <a-radio value="create">创建新 Group</a-radio>
+            <a-radio value="bind">绑定已有 Group</a-radio>
+          </a-radio-group>
+        </a-form-item>
+
+        <template v-if="assetGroupForm.mode === 'create'">
+          <a-form-item label="Group 名称" required>
+            <a-input
+              v-model:value="assetGroupForm.groupName"
+              placeholder="默认使用 Series 名称；最大 64 字符"
+              :maxlength="64"
+              show-count
+            />
+          </a-form-item>
+          <a-form-item label="Group 描述（可选）">
+            <a-textarea v-model:value="assetGroupForm.description" :rows="2" :maxlength="200" />
+          </a-form-item>
+          <div style="color: #faad14; font-size: 12px">
+            ⚠ BytePlus API 调用失败时，Series 仍会创建成功，Group 状态记录为 FAILED，可在详情页重试。
+          </div>
+        </template>
+
+        <template v-if="assetGroupForm.mode === 'bind'">
+          <a-form-item label="搜索已有 Group">
+            <a-select
+              v-model:value="assetGroupForm.groupId"
+              show-search
+              placeholder="输入 Group 名称关键字"
+              :filter-option="false"
+              :options="byteplusGroupOptions"
+              :loading="searchingGroups"
+              @search="onSearchByteplusGroups"
+            />
+          </a-form-item>
+          <div style="color: rgba(0,0,0,.45); font-size: 12px">
+            从 BytePlus 账号下检索已有 Asset Group。绑定后该 Series 的所有资产将归属此 Group。
+          </div>
+        </template>
+      </a-card>
+
       <a-card title="资源预算" style="margin-bottom: 16px">
         <p style="color: #999">至少配置一条 Seedance Token 预算和一条 Canvas 成功次数预算。</p>
         <a-table
@@ -140,12 +188,46 @@
 import { ref, onMounted, computed } from "vue";
 import { useRouter } from "vue-router";
 import { getUsers } from "@/api/users";
-import { createSeries } from "@/api/series";
+import {
+  createSeries,
+  listByteplusAssetGroups,
+  type AssetGroupInput,
+  type ByteplusAssetGroupSummary,
+} from "@/api/series";
 import { message } from "ant-design-vue";
 
 const router = useRouter();
 const submitting = ref(false);
 const userOptions = ref<{ value: string; label: string }[]>([]);
+
+// v2.0.0：Asset Group 表单
+const assetGroupForm = ref({
+  mode: "skip" as "skip" | "create" | "bind",
+  groupName: "",
+  description: "",
+  groupId: undefined as string | undefined,
+});
+const byteplusGroupOptions = ref<{ value: string; label: string }[]>([]);
+const searchingGroups = ref(false);
+let searchSeq = 0;
+
+async function onSearchByteplusGroups(keyword: string) {
+  const seq = ++searchSeq;
+  searchingGroups.value = true;
+  try {
+    const res: any = await listByteplusAssetGroups({ keyword, pageSize: 30 });
+    if (seq !== searchSeq) return; // 丢弃过期搜索
+    const items = (res?.items ?? []) as ByteplusAssetGroupSummary[];
+    byteplusGroupOptions.value = items.map((g) => ({
+      value: g.groupId,
+      label: `${g.groupName} (${g.groupId.slice(0, 8)}…)`,
+    }));
+  } catch {
+    if (seq === searchSeq) byteplusGroupOptions.value = [];
+  } finally {
+    if (seq === searchSeq) searchingGroups.value = false;
+  }
+}
 
 const form = ref({
   name: "",
@@ -220,6 +302,36 @@ async function onSubmit() {
       { userId: form.value.ownerId!, role: "OWNER" as const },
       ...producerIds.value.map((u) => ({ userId: u, role: "PRODUCER" as const })),
     ];
+    // Asset Group 配置（可选）
+    let assetGroup: AssetGroupInput | undefined;
+    if (assetGroupForm.value.mode === "create") {
+      const name = (assetGroupForm.value.groupName || form.value.name).trim();
+      if (!name) {
+        submitting.value = false;
+        return message.warning("请填写 Asset Group 名称");
+      }
+      if (name.length > 64) {
+        submitting.value = false;
+        return message.warning("Asset Group 名称最大 64 字符");
+      }
+      assetGroup = {
+        mode: "create",
+        groupName: name,
+        description: assetGroupForm.value.description || undefined,
+      };
+    } else if (assetGroupForm.value.mode === "bind") {
+      if (!assetGroupForm.value.groupId) {
+        submitting.value = false;
+        return message.warning("请选择要绑定的 BytePlus Asset Group");
+      }
+      const selected = byteplusGroupOptions.value.find((o) => o.value === assetGroupForm.value.groupId);
+      assetGroup = {
+        mode: "bind",
+        groupId: assetGroupForm.value.groupId,
+        groupName: selected?.label,
+      };
+    }
+
     const payload = {
       name: form.value.name,
       description: form.value.description || null,
@@ -238,9 +350,14 @@ async function onSubmit() {
         buffer: String(b.buffer ?? 0),
         allocationMode: b.allocationMode === "NONE" ? undefined : b.allocationMode,
       })),
+      assetGroup,
     };
     const res: any = await createSeries(payload);
-    message.success("创建成功");
+    if (res?.assetGroup?.status === "FAILED") {
+      message.warning(`Series 已创建，但 BytePlus Group 创建失败：${res.assetGroup.error || "未知错误"}。可在详情页重试。`);
+    } else {
+      message.success("创建成功");
+    }
     router.replace(`/series/${res.id}`);
   } catch (e: any) {
     message.error(e?.response?.data?.error || "创建失败");

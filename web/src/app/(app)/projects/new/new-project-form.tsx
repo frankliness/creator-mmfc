@@ -218,7 +218,7 @@ export default function NewProjectForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="assetsJson">资产列表（JSON）</Label>
+                <Label htmlFor="assetsJson">资产列表（JSON · 仅供 LLM 上下文）</Label>
                 <Textarea
                   id="assetsJson"
                   name="assetsJson"
@@ -226,6 +226,10 @@ export default function NewProjectForm() {
                   rows={8}
                   required
                 />
+                <p className="text-xs text-amber-600">
+                  ⚠ v2.0.0 起，分镜实际引用的资产请走 Series 素材库（Series 详情页 → 素材库），并在分镜编辑器中通过选择器绑定。
+                  此处 JSON 仅作为 LLM 自动生成分镜的上下文提示，不会被实际传给 Seedance。
+                </p>
               </div>
 
               <div className="space-y-2">
