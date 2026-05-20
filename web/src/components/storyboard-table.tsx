@@ -38,6 +38,7 @@ import {
   MANUAL_STORYBOARD_DURATION_OPTIONS,
 } from "@/lib/storyboard-duration";
 import { toast } from "sonner";
+import { AssetPickerModal, type GenerationMode, type AssetRefs } from "@/components/asset-picker-modal";
 
 interface AssetBinding {
   index_label: string;
@@ -81,6 +82,10 @@ interface Storyboard {
   prompt: string;
   assetBindings: AssetBinding[];
   seedanceContentItems: SeedanceContentItem[];
+  /** v2.0.0：生成模式；null 表示 legacy 老数据，使用 assetBindings */
+  generationMode?: GenerationMode | null;
+  /** v2.0.0：结构化资产引用 */
+  assetRefs?: AssetRefs | null;
   status: string;
   tasks: Task[];
   createdAt: string;
@@ -95,6 +100,8 @@ interface Props {
   readOnly?: boolean;
   /** v1.9.1：是否为 Series 集数，影响 seed 占位提示文案 */
   inSeries?: boolean;
+  /** v2.0.0：Series ID（在 Series 项目中必传，启用新版 asset picker） */
+  seriesId?: string | null;
 }
 
 const storyboardStatusLabels: Record<string, string> = {
@@ -126,6 +133,32 @@ const taskStatusLabels: Record<string, string> = {
 
 const MAX_STORYBOARD_SEED = 2147483647;
 
+function AssetRefsSummary({ mode, refs }: { mode: GenerationMode | null; refs: AssetRefs | null }) {
+  if (!mode || !refs) {
+    return <p className="text-xs text-muted-foreground">尚未绑定资产，请点击"编辑资产"</p>;
+  }
+  if (mode === "FIRST_FRAME") {
+    const hasFirst = !!refs.first_frame_asset_id;
+    const hasLast = !!refs.last_frame_asset_id;
+    return (
+      <div className="space-y-1 text-xs">
+        <p>首帧：{hasFirst ? <Badge variant="secondary">已选</Badge> : <Badge variant="outline">未选</Badge>}</p>
+        <p>尾帧：{hasLast ? <Badge variant="secondary">已选</Badge> : <span className="text-muted-foreground">可选，未选</span>}</p>
+      </div>
+    );
+  }
+  const imgCount = refs.reference_image_asset_ids?.length ?? 0;
+  const vidCount = refs.reference_video_asset_ids?.length ?? 0;
+  const hasAudio = !!refs.reference_audio_asset_id;
+  return (
+    <div className="space-y-1 text-xs">
+      <p>参考图：<Badge variant={imgCount > 0 ? "secondary" : "outline"}>{imgCount} 张</Badge></p>
+      <p>参考视频：<Badge variant={vidCount > 0 ? "secondary" : "outline"}>{vidCount} 个</Badge></p>
+      <p>参考音频：{hasAudio ? <Badge variant="secondary">已选</Badge> : <span className="text-muted-foreground">未选</span>}</p>
+    </div>
+  );
+}
+
 function formatTime(iso: string) {
   return new Date(iso).toLocaleString("zh-CN", {
     month: "2-digit",
@@ -136,7 +169,7 @@ function formatTime(iso: string) {
   });
 }
 
-export function StoryboardTable({ projectId, storyboards, onUpdate, readOnly = false, inSeries = false }: Props) {
+export function StoryboardTable({ projectId, storyboards, onUpdate, readOnly = false, inSeries = false, seriesId }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editPrompt, setEditPrompt] = useState("");
@@ -145,6 +178,10 @@ export function StoryboardTable({ projectId, storyboards, onUpdate, readOnly = f
   );
   const [editSeed, setEditSeed] = useState("");
   const [editAssetBindings, setEditAssetBindings] = useState<AssetBinding[]>([]);
+  // v2.0.0：新链路状态
+  const [editGenerationMode, setEditGenerationMode] = useState<GenerationMode | null>(null);
+  const [editAssetRefs, setEditAssetRefs] = useState<AssetRefs | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
@@ -160,6 +197,7 @@ export function StoryboardTable({ projectId, storyboards, onUpdate, readOnly = f
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [savingRename, setSavingRename] = useState(false);
+  const [editDisplayName, setEditDisplayName] = useState("");
 
   function startRename(sb: Storyboard) {
     setRenamingId(sb.id);
@@ -221,6 +259,11 @@ export function StoryboardTable({ projectId, storyboards, onUpdate, readOnly = f
         ? sb.assetBindings.map((a) => ({ ...a }))
         : []
     );
+    // v2.0.0：装载新链路状态。Series 项目即使没设 mode 也默认 FIRST_FRAME 让用户立刻开始
+    setEditGenerationMode(sb.generationMode ?? (seriesId ? "FIRST_FRAME" : null));
+    setEditAssetRefs(sb.assetRefs ?? null);
+    // v1.10.0：装载 displayName 到编辑 dialog（picker 内也会显示同步）
+    setEditDisplayName(sb.displayName ?? "");
   }
 
   function updateAssetBinding(idx: number, field: keyof AssetBinding, value: string) {
@@ -259,18 +302,25 @@ export function StoryboardTable({ projectId, storyboards, onUpdate, readOnly = f
     }
     setSaving(true);
 
-    const normalizedBindings = editAssetBindings.map((a) => ({
-      ...a,
-      asset_uri: a.asset_uri.startsWith("asset://")
-        ? a.asset_uri
-        : `asset://${a.asset_uri}`,
-    }));
+    // v2.0.0：新链路（mode + refs）优先；老 legacy（assetBindings）仅在没有新字段时使用
+    const useNewPath = !!(editGenerationMode && editAssetRefs);
 
-    const normalizedItems = normalizedBindings.map((a) => ({
-      type: "image_url" as const,
-      image_url: { url: a.asset_uri },
-      role: "reference_image" as const,
-    }));
+    const normalizedBindings = useNewPath
+      ? []
+      : editAssetBindings.map((a) => ({
+          ...a,
+          asset_uri: a.asset_uri.startsWith("asset://")
+            ? a.asset_uri
+            : `asset://${a.asset_uri}`,
+        }));
+
+    const normalizedItems = useNewPath
+      ? []
+      : normalizedBindings.map((a) => ({
+          type: "image_url" as const,
+          image_url: { url: a.asset_uri },
+          role: "reference_image" as const,
+        }));
 
     const res = await fetch(`/api/storyboards/${editingId}`, {
       method: "PATCH",
@@ -281,6 +331,10 @@ export function StoryboardTable({ projectId, storyboards, onUpdate, readOnly = f
         seed,
         assetBindings: normalizedBindings,
         seedanceContentItems: normalizedItems,
+        generationMode: useNewPath ? editGenerationMode : null,
+        assetRefs: useNewPath ? editAssetRefs : null,
+        // v1.10.0：把 picker 中改的 displayName 一起持久化
+        displayName: editDisplayName.trim() || null,
       }),
     });
     setSaving(false);
@@ -868,45 +922,66 @@ export function StoryboardTable({ projectId, storyboards, onUpdate, readOnly = f
             <Separator />
 
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium">资产绑定</label>
-                <Button size="sm" variant="outline" onClick={addAssetBinding}>
-                  + 添加资产
-                </Button>
-              </div>
-              {editAssetBindings.length === 0 && (
-                <p className="text-xs text-muted-foreground">暂无资产绑定</p>
+              {seriesId ? (
+                /* v2.0.0：Series 项目使用结构化资产绑定 */
+                <>
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium">资产绑定（{editGenerationMode === "FIRST_FRAME" ? "首帧 / 尾帧模式" : "多模态参考模式"}）</label>
+                    <Button size="sm" variant="outline" onClick={() => setPickerOpen(true)}>
+                      编辑资产
+                    </Button>
+                  </div>
+                  <AssetRefsSummary mode={editGenerationMode} refs={editAssetRefs} />
+                  {editAssetBindings.length > 0 && (
+                    <p className="text-xs text-amber-600">
+                      ℹ 检测到 legacy assetBindings（{editAssetBindings.length} 项）。保存后将清空并改为新版结构化引用。
+                    </p>
+                  )}
+                </>
+              ) : (
+                /* legacy 老项目（非 Series）：保留手填表单 */
+                <>
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium">资产绑定（legacy）</label>
+                    <Button size="sm" variant="outline" onClick={addAssetBinding}>
+                      + 添加资产
+                    </Button>
+                  </div>
+                  {editAssetBindings.length === 0 && (
+                    <p className="text-xs text-muted-foreground">暂无资产绑定</p>
+                  )}
+                  {editAssetBindings.map((ab, idx) => (
+                    <div key={idx} className="grid grid-cols-[60px_1fr_1fr_32px] gap-2 items-center">
+                      <Input
+                        value={ab.index_label}
+                        onChange={(e) => updateAssetBinding(idx, "index_label", e.target.value)}
+                        placeholder="图1"
+                        className="text-xs"
+                      />
+                      <Input
+                        value={ab.asset_name}
+                        onChange={(e) => updateAssetBinding(idx, "asset_name", e.target.value)}
+                        placeholder="资产名称"
+                        className="text-xs"
+                      />
+                      <Input
+                        value={ab.asset_uri}
+                        onChange={(e) => updateAssetBinding(idx, "asset_uri", e.target.value)}
+                        placeholder="asset://asset-xxxx 或 asset-xxxx"
+                        className="text-xs font-mono"
+                      />
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 p-0 text-destructive"
+                        onClick={() => removeAssetBinding(idx)}
+                      >
+                        ×
+                      </Button>
+                    </div>
+                  ))}
+                </>
               )}
-              {editAssetBindings.map((ab, idx) => (
-                <div key={idx} className="grid grid-cols-[60px_1fr_1fr_32px] gap-2 items-center">
-                  <Input
-                    value={ab.index_label}
-                    onChange={(e) => updateAssetBinding(idx, "index_label", e.target.value)}
-                    placeholder="图1"
-                    className="text-xs"
-                  />
-                  <Input
-                    value={ab.asset_name}
-                    onChange={(e) => updateAssetBinding(idx, "asset_name", e.target.value)}
-                    placeholder="资产名称"
-                    className="text-xs"
-                  />
-                  <Input
-                    value={ab.asset_uri}
-                    onChange={(e) => updateAssetBinding(idx, "asset_uri", e.target.value)}
-                    placeholder="asset://asset-xxxx 或 asset-xxxx"
-                    className="text-xs font-mono"
-                  />
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-8 w-8 p-0 text-destructive"
-                    onClick={() => removeAssetBinding(idx)}
-                  >
-                    ×
-                  </Button>
-                </div>
-              ))}
             </div>
 
             <Separator />
@@ -932,6 +1007,23 @@ export function StoryboardTable({ projectId, storyboards, onUpdate, readOnly = f
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* v2.0.0：资产 picker（仅 Series 项目） */}
+      {seriesId && (
+        <AssetPickerModal
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          seriesId={seriesId}
+          initialMode={editGenerationMode ?? "FIRST_FRAME"}
+          initialRefs={editAssetRefs ?? {}}
+          initialDisplayName={editDisplayName}
+          onConfirm={(mode, refs, displayName) => {
+            setEditGenerationMode(mode);
+            setEditAssetRefs(refs);
+            setEditDisplayName(displayName);
+          }}
+        />
+      )}
 
       {/* 视频预览弹窗 */}
       <Dialog open={previewVideo !== null} onOpenChange={(open) => !open && setPreviewVideo(null)}>

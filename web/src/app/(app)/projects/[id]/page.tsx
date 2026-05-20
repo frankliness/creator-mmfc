@@ -182,6 +182,7 @@ export default function ProjectPage() {
           onUpdate={mutate}
           readOnly={isReadOnly}
           inSeries={!!project.seriesId}
+          seriesId={project.seriesId ?? null}
         />
       )}
 

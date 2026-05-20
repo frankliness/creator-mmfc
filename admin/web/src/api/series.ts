@@ -24,6 +24,18 @@ export interface MemberItem {
   role: "OWNER" | "PRODUCER" | "VIEWER";
 }
 
+/** v2.0.0：创建 Series 时可选地配置 BytePlus Asset Group */
+export interface AssetGroupInput {
+  /** bind=使用已有 BytePlus Group；create=调 BytePlus 创建新 Group */
+  mode: "bind" | "create";
+  /** mode=bind 必填 */
+  groupId?: string;
+  /** mode=create 必填，最大 64 字符 */
+  groupName?: string;
+  description?: string;
+  projectName?: string;
+}
+
 export interface CreateSeriesPayload {
   name: string;
   description?: string | null;
@@ -34,6 +46,32 @@ export interface CreateSeriesPayload {
   defaultStyle?: string;
   members: MemberItem[];
   resourceBudgets: BudgetItem[];
+  /** v2.0.0：Asset Group 配置（可选） */
+  assetGroup?: AssetGroupInput;
+}
+
+export interface SeriesAssetGroup {
+  id: string;
+  seriesId: string;
+  provider: string;
+  groupId: string | null;
+  groupName: string;
+  groupType: string;
+  projectName: string;
+  /** ACTIVE / FAILED / UNBOUND */
+  status: string;
+  error: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ByteplusAssetGroupSummary {
+  groupId: string;
+  groupName: string;
+  groupType: string;
+  projectName: string;
+  createdAt?: string;
 }
 
 export const listSeries = (params?: SeriesListParams) =>
@@ -103,3 +141,26 @@ export function assignProjectToSeries(seriesId: string, data: {
 export function distributeSeriesBudget(seriesId: string, budgetId: string) {
   return request.post(`/series/${seriesId}/resource-budgets/${budgetId}/distribute`);
 }
+
+// === v2.0.0: Asset Group ===
+
+export const getSeriesAssetGroup = (id: string) =>
+  request.get<SeriesAssetGroup | null>(`/series/${id}/asset-group`);
+
+/** 创建 / 重试 / 改绑（同一接口，upsert 语义）。 */
+export const bindSeriesAssetGroup = (id: string, payload: AssetGroupInput) =>
+  request.post<SeriesAssetGroup>(`/series/${id}/asset-group`, payload);
+
+export const unbindSeriesAssetGroup = (id: string) =>
+  request.delete(`/series/${id}/asset-group`);
+
+export const listByteplusAssetGroups = (params?: {
+  keyword?: string;
+  projectName?: string;
+  pageSize?: number;
+  pageToken?: string;
+}) =>
+  request.get<{ items: ByteplusAssetGroupSummary[]; nextPageToken?: string }>(
+    "/series/byteplus/asset-groups",
+    { params },
+  );

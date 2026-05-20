@@ -28,8 +28,12 @@ const updateSchema = z.object({
     .number()
     .refine(isValidManualStoryboardDuration, "时长仅支持整数秒：4-15 或 -1")
     .optional(),
+  /** Legacy 字段：新链路不再写入，但保留供前端兼容性更新 */
   assetBindings: z.any().optional(),
   seedanceContentItems: z.any().optional(),
+  /** v2.0.0：新链路字段 */
+  generationMode: z.enum(["FIRST_FRAME", "MULTIMODAL"]).nullable().optional(),
+  assetRefs: z.any().optional(),
   seed: z
     .number()
     .int()
@@ -88,6 +92,10 @@ export async function PATCH(
     data.assetBindings = parsed.data.assetBindings;
   if (parsed.data.seedanceContentItems !== undefined)
     data.seedanceContentItems = parsed.data.seedanceContentItems;
+  if (parsed.data.generationMode !== undefined)
+    data.generationMode = parsed.data.generationMode;
+  if (parsed.data.assetRefs !== undefined)
+    data.assetRefs = parsed.data.assetRefs;
   if (parsed.data.seed !== undefined) data.seed = parsed.data.seed;
   if (parsed.data.displayName !== undefined) {
     // 空字符串/null 都表示清除自定义名，回落到 storyboardId
