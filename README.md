@@ -35,6 +35,8 @@
 - 邮箱密码登录（NextAuth + Credentials）
 - 项目创建、项目列表、项目详情
 - 剧本转分镜、分镜克隆、批量提交视频任务、批量下载结果
+- Series 素材库（`/series/[id]/assets`）：上传图片 / 视频 / 音频，自动落 OSS + 同步 BytePlus（v2.0.0）
+- 分镜资产 picker：FIRST_FRAME / MULTIMODAL 两种模式，首帧资产名自动填入分镜 displayName（v2.0.0，取代旧 `asset_uri` 手填）
 - `/ai-canvas` 入口与同源 Canvas API（聊天、配置、图片任务、素材访问）
 
 ### AI 画布 `MMFC-canvas/`
@@ -43,10 +45,11 @@
 - 画布聊天、提示词润色、工作流模板、自动执行
 - 文生图 / 图生图异步任务恢复：关 tab、刷新、断网后可续轮询
 - 项目内素材管理、批量下载、API 设置、模型/凭据选择
+- "同步到 Series 素材库"按钮 + 命名 modal：把画布图片复制到 OSS 建 `SeriesAsset(CANVAS_GENERATED)`（v2.0.0）
 
 ### Worker `web/src/worker/`
 
-- Seedance 视频任务轮询、状态落库、视频下载与可选 GCS 上传
+- Seedance 视频任务轮询、状态落库、视频下载 → 阿里云 OSS → `SeriesAsset(VIDEO_RESULT / VIDEO_TAIL_FRAME)` → 异步 BytePlus 同步（v2.0.0；尾帧 API URL 优先，缺失时 ffmpeg 抽末帧）
 - Canvas 生图任务轮询、僵尸任务回收、资产落盘、审计日志与费用估算
 
 ### 管理后台 `admin/server` + `admin/web`
