@@ -1,6 +1,6 @@
 # Creator MMFC 架构文档
 
-> 更新日期：2026-05-19（v1.10.2）
+> 更新日期：2026-05-20（v1.10.3）
 > 适用范围：当前仓库 `creator_mmfc`
 > 文档目标：面向开发、运维、二次改造人员，说明系统边界、代码结构、运行时数据流、核心模型、部署方式与主要设计取舍。
 
@@ -689,6 +689,7 @@ Series 成员关系。
 - v1.9.0：`seriesId?`——绑定 Series（legacy 项目为 null，走旧配额；Series 项目走预算池）
 - v1.9.0：`version Int @default(1)`——乐观锁版本号；客户端 autosave 提交 `baseVersion`，服务端事务内 `FOR UPDATE` 比对，stale 即返 `409 STALE_BASE_VERSION`
 - v1.10.2：创建、重命名、改归属时做服务端名称查重。Series 画布在同一 `seriesId` 下非 `DELETED` 不允许重名；legacy 个人画布在同一用户的 `seriesId IS NULL` 范围内不允许重名。历史重名数据保留不回写。
+- v1.10.3：画布列表查询分成工作台视角与 Series 档案视角。工作台首页仅展示 legacy 个人画布与 `ACTIVE` Series 画布；Series 详情页可显式查询某个 Series 下的全部非 `DELETED` 画布（含归档 Series）
 
 状态：
 
@@ -926,6 +927,11 @@ PERSISTING
 - 渲染同源 iframe，地址 `/canvas/`
 - 监听来自 iframe 的 `postMessage`
 - 作为 Canvas SPA 的宿主壳层
+
+v1.10.3 入口语义补充：
+
+- `/ai-canvas` 首页画布列表作为工作台入口，默认隐藏已归档 / 非 `ACTIVE` Series 下的历史画布
+- `/series/[seriesId]` 内的 Canvas 区块作为档案入口，显式按 `seriesId` 查询该 Series 下的画布，因此归档 Series 仍可查看历史画布
 
 设计意义：
 

@@ -28,22 +28,60 @@ async function findDuplicateCanvasName(args: {
   });
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const auth = await requireCanvasUser();
   if (!auth.ok) return authError(auth);
 
-  // v1.9.0：返回 (我自建的 legacy / seriesId=null) ∪ (我加入的 Series 下的全部 Canvas)
+  const requestedSeriesId = req.nextUrl.searchParams.get("seriesId");
+
+  // v1.9.0：返回 (我自建的 legacy / seriesId=null) ∪ (我加入的 ACTIVE Series 下的全部 Canvas)
+  // 目的：已归档/已锁定的历史 Series 画布不再出现在 /ai-canvas 首页，但直链访问仍可单独控制。
   const memberships = await prisma.projectMember.findMany({
     where: { userId: auth.user.id, status: "ACTIVE" },
     select: { seriesId: true },
   });
-  const seriesIds = memberships.map((m) => m.seriesId);
+  const memberSeriesIds = memberships.map((m) => m.seriesId);
+
+  // Series 详情页显式查询某个 Series 时，按档案视角返回该 Series 下的画布。
+  // 这里不按 Series.status 过滤，否则归档 Series 页面看不到历史画布。
+  if (requestedSeriesId) {
+    if (!memberSeriesIds.includes(requestedSeriesId)) {
+      return NextResponse.json([]);
+    }
+    const list = await prisma.canvasProject.findMany({
+      where: {
+        status: { not: "DELETED" },
+        seriesId: requestedSeriesId,
+      },
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        name: true,
+        thumbnail: true,
+        viewport: true,
+        status: true,
+        seriesId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return NextResponse.json(list);
+  }
+
+  const visibleSeries = memberSeriesIds.length
+    ? await prisma.series.findMany({
+        where: { id: { in: memberSeriesIds }, status: "ACTIVE" },
+        select: { id: true },
+      })
+    : [];
+  const seriesIds = visibleSeries.map((s) => s.id);
 
   const list = await prisma.canvasProject.findMany({
     where: {
       status: { not: "DELETED" },
       OR: [
-        { userId: auth.user.id },
+        { userId: auth.user.id, seriesId: null },
         ...(seriesIds.length ? [{ seriesId: { in: seriesIds } }] : []),
       ],
     },

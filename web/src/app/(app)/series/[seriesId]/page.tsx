@@ -26,6 +26,24 @@ const episodeStatusLabel: Record<string, string> = {
   FAILED: "失败",
 };
 
+function formatEpisodeTitle(episode: {
+  name: string;
+  episodeNumber: number | null;
+  episodeTitle: string | null;
+}) {
+  if (episode.episodeNumber == null && !episode.episodeTitle) {
+    return episode.name;
+  }
+  if (episode.episodeTitle) {
+    return `第 ${episode.episodeNumber ?? "-"} 集${
+      episode.episodeTitle !== `第 ${episode.episodeNumber} 集`
+        ? ` · ${episode.episodeTitle}`
+        : ""
+    }`;
+  }
+  return `第 ${episode.episodeNumber ?? "-"} 集`;
+}
+
 export default async function SeriesDetailPage(
   props: { params: Promise<{ seriesId: string }> },
 ) {
@@ -135,9 +153,7 @@ export default async function SeriesDetailPage(
                   <CardHeader>
                     <div className="flex items-start justify-between gap-2">
                       <CardTitle className="text-base">
-                        {p.episodeTitle
-                          ? `第 ${p.episodeNumber ?? "-"} 集${p.episodeTitle !== `第 ${p.episodeNumber} 集` ? ` · ${p.episodeTitle}` : ""}`
-                          : `第 ${p.episodeNumber ?? "-"} 集`}
+                        {formatEpisodeTitle(p)}
                       </CardTitle>
                       <div className="flex flex-wrap items-center gap-1">
                         {locked && <Badge variant="outline">已锁定</Badge>}

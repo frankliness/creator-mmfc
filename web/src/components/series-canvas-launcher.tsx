@@ -39,10 +39,10 @@ export function SeriesCanvasLauncher({ seriesId, readOnly = false }: { seriesId:
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/canvas/projects")
+    fetch(`/api/canvas/projects?seriesId=${encodeURIComponent(seriesId)}`)
       .then((r) => r.json())
       .then((data: CanvasProject[]) => {
-        setProjects(data.filter((p) => p.seriesId === seriesId));
+        setProjects(Array.isArray(data) ? data : []);
       })
       .catch(() => {/* silently ignore */})
       .finally(() => setLoading(false));

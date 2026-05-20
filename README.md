@@ -1,6 +1,6 @@
 # Creator MMFC
 
-**版本：1.10.2**
+**版本：1.10.3**
 
 面向分镜与视频创作的一体化平台：用户端（Next.js）、异步 Worker、管理后台（Fastify + Vue），并集成 **MMFC Studio Canvas**（Vue Flow 可视化 AI 画布）。数据层使用 **PostgreSQL**，可选 **GCS** 做对象存储。
 
@@ -64,6 +64,30 @@
 - OWNER buffer 调配（buffer ↔ 集数双向）、集数锁定 / 解锁
 - 新建画布弹窗可绑定 Series；画布生图调用从 Series 预算池扣减
 - 画布快照乐观锁互踢提示、画布文字节点拖拽缩放
+
+---
+
+### 版本 1.10.3 更新摘要
+
+**主要特性：历史归档画布与工作台入口解耦**
+
+#### 1. 历史归档迁移脚本
+
+- 新增 `admin/scripts/archive-legacy-projects-readonly-budget.sql`
+- 用于把 legacy `Project` / `CanvasProject` 归档到单个 Series，并创建 0 预算：
+  - `seedance / * / video_generation / TOKEN = 0`
+  - `canvas / * / canvas_image_generation / SUCCESS_COUNT = 0`
+- 目标是阻止历史项目继续产生新的 Seedance / Canvas 生图消耗
+
+#### 2. 归档 Series 保留历史项目名称
+
+- `/series/[seriesId]` 页面对未设置 `episodeNumber / episodeTitle` 的归档 legacy 项目，改为直接显示原始 `Project.name`
+- 正常 Series 集数仍保持 `第 N 集 · 标题` 的展示方式
+
+#### 3. Canvas 两个入口分离
+
+- `/ai-canvas` 首页：只显示 legacy 个人画布和 `ACTIVE` Series 下的画布，隐藏归档 Series 的历史画布
+- `/series/[seriesId]` 页面内的 Canvas 区块：显式按 `seriesId` 拉取该 Series 下的画布，归档 Series 也能查看历史画布
 
 ---
 
