@@ -18,7 +18,7 @@ import {
   extFromMime,
   type AssetType,
 } from "./asset-naming";
-import { uploadBuffer } from "./oss-client";
+import { uploadBuffer, getSignedUrl } from "./oss-client";
 import {
   createAsset as byteplusCreateAsset,
   getAsset as byteplusGetAsset,
@@ -152,10 +152,13 @@ async function doByteplusCreateAsset(assetId: string): Promise<void> {
     return;
   }
   try {
+    // BytePlus CreateAsset 需要可拉取的 URL。OSS bucket 私读时必须用预签名 URL；
+    // 公读时签名 URL 也能用。TTL 2h 足够 BytePlus 异步处理（实测 < 2s）
+    const fetchableUrl = await getSignedUrl(asset.ossObjectKey, 7200).catch(() => asset.ossPublicUrl);
     const result = await byteplusCreateAsset({
       groupId: asset.byteplusGroupId,
       assetName: asset.byteplusAssetName,
-      url: asset.ossPublicUrl,
+      url: fetchableUrl,
       assetType: asset.byteplusAssetType as ByteplusAssetType,
     });
     await prisma.seriesAsset.update({
