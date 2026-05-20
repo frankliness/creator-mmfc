@@ -130,7 +130,7 @@ export function SeriesAssetLibrary({
           <div className="mb-4 flex flex-wrap items-end gap-3">
             <div>
               <Label className="text-xs">类型</Label>
-              <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v ?? "ALL")}>
                 <SelectTrigger className="w-32">
                   <SelectValue />
                 </SelectTrigger>
@@ -144,7 +144,7 @@ export function SeriesAssetLibrary({
             </div>
             <div>
               <Label className="text-xs">来源</Label>
-              <Select value={sourceFilter} onValueChange={setSourceFilter}>
+              <Select value={sourceFilter} onValueChange={(v) => setSourceFilter(v ?? "ALL")}>
                 <SelectTrigger className="w-40">
                   <SelectValue />
                 </SelectTrigger>
@@ -159,7 +159,7 @@ export function SeriesAssetLibrary({
             </div>
             <div>
               <Label className="text-xs">同步状态</Label>
-              <Select value={syncFilter} onValueChange={setSyncFilter}>
+              <Select value={syncFilter} onValueChange={(v) => setSyncFilter(v ?? "ALL")}>
                 <SelectTrigger className="w-32">
                   <SelectValue />
                 </SelectTrigger>

@@ -156,9 +156,12 @@ export async function uploadStream(
   const headers: Record<string, string> = {};
   if (options?.contentType) headers["Content-Type"] = options.contentType;
   if (options?.cacheControl) headers["Cache-Control"] = options.cacheControl;
-  const putOpts: { headers: Record<string, string>; contentLength?: number } = { headers };
-  if (options?.contentLength != null) putOpts.contentLength = options.contentLength;
-  await client.putStream(objectKey, stream, putOpts);
+  // ali-oss 的 PutStreamOptions 在类型上要求 timeout/mime/meta/callback，但运行时全为 optional。
+  // 用 as 跳过类型严格匹配 — 运行时 SDK 会 fallback 到默认值。
+  await client.putStream(objectKey, stream, {
+    headers,
+    contentLength: options?.contentLength,
+  } as Parameters<typeof client.putStream>[2]);
   return {
     bucket: config.bucket,
     objectKey,
