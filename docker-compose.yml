@@ -82,6 +82,19 @@ services:
       VIDEO_STORAGE_PATH: /data/videos
       # 画布生成 / 上传图片的存储目录（持久化卷 canvas_images 挂载到此处）
       IMAGE_STORAGE_PATH: ${IMAGE_STORAGE_PATH:-/data/canvas-images}
+      # v2.0.0：阿里云 OSS（Series 素材库长期存储）
+      ALIYUN_OSS_REGION: ${ALIYUN_OSS_REGION:-}
+      ALIYUN_OSS_BUCKET: ${ALIYUN_OSS_BUCKET:-}
+      ALIYUN_OSS_ACCESS_KEY_ID: ${ALIYUN_OSS_ACCESS_KEY_ID:-}
+      ALIYUN_OSS_ACCESS_KEY_SECRET: ${ALIYUN_OSS_ACCESS_KEY_SECRET:-}
+      ALIYUN_OSS_ENDPOINT: ${ALIYUN_OSS_ENDPOINT:-}
+      ALIYUN_OSS_PUBLIC_HOST: ${ALIYUN_OSS_PUBLIC_HOST:-}
+      # v2.0.0：BytePlus Asset Library（V4 HMAC 签名）
+      BYTEPLUS_ACCESS_KEY: ${BYTEPLUS_ACCESS_KEY:-}
+      BYTEPLUS_SECRET_KEY: ${BYTEPLUS_SECRET_KEY:-}
+      BYTEPLUS_REGION: ${BYTEPLUS_REGION:-ap-southeast-1}
+      BYTEPLUS_ENDPOINT: ${BYTEPLUS_ENDPOINT:-https://open.byteplusapi.com}
+      BYTEPLUS_PROJECT_NAME: ${BYTEPLUS_PROJECT_NAME:-default}
       # 邮箱验证码 SMTP
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -117,6 +130,18 @@ services:
       VIDEO_STORAGE_PATH: /data/videos
       IMAGE_STORAGE_PATH: ${IMAGE_STORAGE_PATH:-/data/canvas-images}
       WORKER_POLL_INTERVAL: ${WORKER_POLL_INTERVAL:-15000}
+      # v2.0.0：Worker 自动资产化（视频结果 + 尾帧）需要 OSS + BytePlus 凭据
+      ALIYUN_OSS_REGION: ${ALIYUN_OSS_REGION:-}
+      ALIYUN_OSS_BUCKET: ${ALIYUN_OSS_BUCKET:-}
+      ALIYUN_OSS_ACCESS_KEY_ID: ${ALIYUN_OSS_ACCESS_KEY_ID:-}
+      ALIYUN_OSS_ACCESS_KEY_SECRET: ${ALIYUN_OSS_ACCESS_KEY_SECRET:-}
+      ALIYUN_OSS_ENDPOINT: ${ALIYUN_OSS_ENDPOINT:-}
+      ALIYUN_OSS_PUBLIC_HOST: ${ALIYUN_OSS_PUBLIC_HOST:-}
+      BYTEPLUS_ACCESS_KEY: ${BYTEPLUS_ACCESS_KEY:-}
+      BYTEPLUS_SECRET_KEY: ${BYTEPLUS_SECRET_KEY:-}
+      BYTEPLUS_REGION: ${BYTEPLUS_REGION:-ap-southeast-1}
+      BYTEPLUS_ENDPOINT: ${BYTEPLUS_ENDPOINT:-https://open.byteplusapi.com}
+      BYTEPLUS_PROJECT_NAME: ${BYTEPLUS_PROJECT_NAME:-default}
 
   admin-api:
     build:
@@ -138,6 +163,12 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
       PORT: "3100"
       IMAGE_STORAGE_PATH: ${IMAGE_STORAGE_PATH:-/data/canvas-images}
+      # v2.0.0：Admin 创建 Series 时调 BytePlus CreateAssetGroup / ListAssetGroups
+      BYTEPLUS_ACCESS_KEY: ${BYTEPLUS_ACCESS_KEY:-}
+      BYTEPLUS_SECRET_KEY: ${BYTEPLUS_SECRET_KEY:-}
+      BYTEPLUS_REGION: ${BYTEPLUS_REGION:-ap-southeast-1}
+      BYTEPLUS_ENDPOINT: ${BYTEPLUS_ENDPOINT:-https://open.byteplusapi.com}
+      BYTEPLUS_PROJECT_NAME: ${BYTEPLUS_PROJECT_NAME:-default}
     healthcheck:
       test:
         [
